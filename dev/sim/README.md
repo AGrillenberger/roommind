@@ -88,6 +88,7 @@ Actions: `window.open/close`, `person.leave/arrive`, `occupancy.set`, `cover.man
 `ha.restart`, `roommind.reload`, `sim.param`, `clock.speed/pause`, `mark`.
 
 Invariants: `min_run_respected` (physical compressor), `min_run_commanded`,
+`min_run_hold_keeps_setpoint` (#436: no setpoint cut while the min run holds a unit),
 `min_off_respected`, `target_never_empty`, `no_cooling_below_outdoor_min`,
 `setpoints_within_device_range`, `no_rejected_commands`, `window_open_pauses`,
 `no_heat_and_cool_same_group`, `no_commands_when_climate_off`, `max_commands_per_hour`.

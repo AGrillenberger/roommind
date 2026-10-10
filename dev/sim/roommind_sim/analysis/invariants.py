@@ -120,6 +120,77 @@ def min_run_commanded(run: RunData, tolerance_s: float = 45.0) -> list[Violation
     return out
 
 
+def _active_targets_before(run: RunData, area: str, t: float) -> dict[str, Any] | None:
+    """Room state at the last observer tick before ``t`` in which the room heated or cooled."""
+    for o in reversed(run.observer):
+        if o["t"] > t:
+            continue
+        room = o["rooms"].get(area) or {}
+        if room.get("mode") in ("heating", "cooling"):
+            return room
+    return None
+
+
+def min_run_hold_keeps_setpoint(run: RunData, tolerance_k: float = 0.05) -> list[Violation]:
+    """While the min-run holds a unit on, RoomMind does not cut its setpoint back (#436).
+
+    A heating setpoint lowered (cooling setpoint raised) during the hold stops units
+    whose own sensor already reads the room as warm (cold) enough; in #436 the mode
+    stayed "heat" while the compressor stopped. Allowed: the room target itself moved
+    that way since the last active tick (eco override, vacation, schedule), or the room
+    ran past the far side of its band (documented band-overshoot rule).
+    """
+    rooms_cfg = run.rooms_config()
+    area_of: dict[str, str | None] = {}
+    for group in _groups(run):
+        for m in group.get("members", []):
+            area_of[m] = _room_of(run, m)
+    out: list[Violation] = []
+    setpoint: dict[str, float] = {}
+    mode: dict[str, str] = {}
+    for c in run.commands:
+        eid = c["entity_id"]
+        if eid not in area_of or not str(c.get("result", "")).startswith("accepted"):
+            continue
+        data = c["data"]
+        if data.get("hvac_mode"):
+            mode[eid] = data["hvac_mode"]
+        if c["service"] != "set_temperature" or data.get("temperature") is None:
+            continue
+        new = float(data["temperature"])
+        prev = setpoint.get(eid)
+        setpoint[eid] = new
+        area = area_of[eid]
+        if prev is None or area is None:
+            continue
+        # The observer polls after the coordinator tick that sent the command.
+        obs = run.observer_at(c["t"] + 35) or {}
+        room = obs.get("rooms", {}).get(area) or {}
+        if not room.get("compressor_protection_active") or room.get("mode") != "idle":
+            continue
+        heating = mode.get(eid) == "heat"
+        cooling = mode.get(eid) == "cool"
+        if not ((heating and new < prev - tolerance_k) or (cooling and new > prev + tolerance_k)):
+            continue
+        key = "heat_target" if heating else "cool_target"
+        ref = _active_targets_before(run, area, c["t"]) or {}
+        now_t, ref_t = room.get(key), ref.get(key)
+        if now_t is not None and ref_t is not None:
+            if (heating and now_t < ref_t - tolerance_k) or (cooling and now_t > ref_t + tolerance_k):
+                continue
+        climate_mode = (rooms_cfg.get(area) or {}).get("climate_mode", "auto")
+        cur = room.get("current_temp")
+        if cur is not None:
+            if heating and climate_mode != "heat_only" and room.get("cool_target") is not None:
+                if cur >= room["cool_target"]:
+                    continue
+            if cooling and climate_mode != "cool_only" and room.get("heat_target") is not None:
+                if cur <= room["heat_target"]:
+                    continue
+        out.append(Violation(c["t"], f"{eid}: setpoint {prev} -> {new} during the min-run hold ({area} idle)"))
+    return out
+
+
 def min_off_respected(run: RunData, tolerance_s: float = 45.0) -> list[Violation]:
     out: list[Violation] = []
     for group in _groups(run):
@@ -276,6 +347,7 @@ INVARIANTS: dict[str, Callable[..., list[Violation]]] = {
     for f in (
         min_run_respected,
         min_run_commanded,
+        min_run_hold_keeps_setpoint,
         min_off_respected,
         target_never_empty,
         no_cooling_below_outdoor_min,

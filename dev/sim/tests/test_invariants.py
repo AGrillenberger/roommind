@@ -7,6 +7,7 @@ from helpers import scenario
 from roommind_sim.analysis.invariants import (
     max_commands_per_hour,
     min_run_commanded,
+    min_run_hold_keeps_setpoint,
     min_run_respected,
     no_cooling_below_outdoor_min,
     target_never_empty,
@@ -141,3 +142,46 @@ def test_commanded_min_run_counts_per_group():
     assert min_run_commanded(run) == []
     events[3]["t"] = t0 + 600  # whole group off after 10 min
     assert len(min_run_commanded(run)) == 1
+
+
+def _hold_run(setpoints, heat_targets=(21.0, 21.0), cool_target=None, climate_mode="heat_only"):  # noqa: ANN001
+    """Heat at 30 °C, the room goes idle into the min-run hold, then ``setpoints`` are sent."""
+    run = _run(
+        [False] * 30,
+        commands=[(60, "set_temperature", {"temperature": 30.0, "hvac_mode": "heat"})]
+        + [(120 + 30 * i, "set_temperature", {"temperature": v}) for i, v in enumerate(setpoints)],
+    )
+    run.storage["rooms"]["r"]["climate_mode"] = climate_mode
+    room = {"heat_target": heat_targets[0], "cool_target": cool_target, "current_temp": 21.5}
+    run.observer = [{"t": run.start + 90, "rooms": {"r": {**room, "mode": "heating"}}}] + [
+        {
+            "t": run.start + 150 + 30 * i,
+            "rooms": {
+                "r": {**room, "heat_target": heat_targets[1], "mode": "idle", "compressor_protection_active": True}
+            },
+        }
+        for i in range(len(setpoints))
+    ]
+    return run
+
+
+def test_hold_must_not_cut_the_setpoint_to_the_target_436():
+    assert len(min_run_hold_keeps_setpoint(_hold_run([21.0]))) == 1
+    assert min_run_hold_keeps_setpoint(_hold_run([])) == []
+    assert min_run_hold_keeps_setpoint(_hold_run([30.0])) == []
+
+
+def test_hold_passes_a_lowered_target_on():
+    assert min_run_hold_keeps_setpoint(_hold_run([17.0], heat_targets=(21.0, 17.0))) == []
+
+
+def test_hold_band_overshoot_may_send_the_target():
+    run = _hold_run([21.0], cool_target=21.5, climate_mode="auto")
+    assert min_run_hold_keeps_setpoint(run) == []
+
+
+def test_setpoint_drop_outside_the_hold_is_fine():
+    run = _hold_run([21.0])
+    for o in run.observer:
+        o["rooms"]["r"]["compressor_protection_active"] = False
+    assert min_run_hold_keeps_setpoint(run) == []
