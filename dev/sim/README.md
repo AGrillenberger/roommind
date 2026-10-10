@@ -43,7 +43,7 @@ never in the repository.
 | `sim suite [-j N] [--tag t] [--roommind-src ref]` | All scenarios in `scenarios/` |
 | `sim compare <run-a> <run-b>` | Metric diff, e.g. a git ref against your working tree |
 | `sim report [run]` | Re-evaluate a run (`last` by default) |
-| `sim up [name] --scenario X [--catch-up] [--speed 60] [--paused] [--from-run R] [--ttl 4h]` | Live instance with UI, reachable on the LAN without password (trusted networks) |
+| `sim up [name] --scenario X [--catch-up] [--speed 60] [--paused] [--from-run R] [--ttl 2h]` | Live instance with UI, reachable on the LAN without password (trusted networks) |
 | `sim clock <name> ff 6h \| speed 60 \| pause \| realtime \| until <ISO>` | Control the clock of a live instance |
 | `sim do <name> <action> k=v ...` | Run a timeline action now (open a window, person leaves, ...) |
 | `sim ws <name> <type> [json]` | Any WebSocket command, e.g. `roommind/rooms/list` |
@@ -51,7 +51,7 @@ never in the repository.
 | `sim shot <name> [--path] [--viewport desktop\|mobile\|tablet] [--dark] [--lang de] [--do click:Text]` | Screenshot with Playwright; prints browser console and HA errors |
 | `sim import <diagnostics.json> [--history roommind_room_*.csv] [--mode closed\|replay]` | Turn a reporter's export into a scenario (see below) |
 | `sim venv add\|list\|prune <ha-version>` | Additional HA versions, e.g. betas: `sim up --ha 2026.11.0b0` |
-| `sim prune [--keep 20]` | Delete old runs and screenshots |
+| `sim prune [--keep 20]` | Delete old runs and screenshots (never running or < 6 h old ones) |
 
 `--roommind-src` takes a path to another checkout or any git ref; refs are exported
 once into `$ROOMMIND_SIM_HOME/src/`. Called through a symlink from inside a git
@@ -129,7 +129,17 @@ plans) is guessed and listed under `assumptions:` in the generated scenario.
 - In scaled mode the browser's own clock differs from the simulated one; `sim shot`
   aligns it, a phone looking at a live instance does not.
 - Live instances accept anyone on the local /24 network without a password. They contain
-  only simulated devices; stop them with `sim down` (they also stop after `--ttl`).
+  only simulated devices; stop them with `sim down`.
+
+## Housekeeping
+
+- Live instances stop by themselves after `--ttl` (default 2 h): via systemd
+  `RuntimeMaxSec` and, independently, a real-time alarm inside the process.
+- Batch runs abort after `--max-real` (default 2 h) or when the simulated clock stops
+  moving for 5 minutes.
+- After every batch run, finished runs older than 3 days are deleted, then the oldest
+  finished runs while all runs exceed 2 GB; screenshots older than 3 days go too.
+  Running runs and runs younger than 6 hours are never touched.
 
 ## Tests
 

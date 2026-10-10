@@ -191,6 +191,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         created=time.time(),
     )
     py = _python(args.ha)
+    max_real = parse_duration(args.max_real)
     print(f"run {inst.dir.name}: {scn.name}, {format_offset(scn.duration)} simulated", flush=True)
     print(f"  RoomMind {src.get('git', '?')} ({src['path']})", flush=True)
     t0 = time.time()
@@ -212,8 +213,9 @@ def cmd_run(args: argparse.Namespace) -> int:
                 last, last_change = progress, time.time()
                 if progress and not args.quiet:
                     print(f"\r  {progress}", end="", flush=True)
-            elif time.time() - last_change > args.stall_timeout:
-                print(f"\nno progress for {args.stall_timeout:.0f}s real, killing the run", file=sys.stderr)
+            elif time.time() - last_change > args.stall_timeout or time.time() - t0 > max_real:
+                why = "no progress" if time.time() - last_change > args.stall_timeout else "--max-real reached"
+                print(f"\n{why} after {time.time() - t0:.0f}s real, killing the run", file=sys.stderr)
                 proc.terminate()
                 try:
                     proc.wait(30)
@@ -233,6 +235,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     _print_summary(summary, real)
     if not args.keep:
         _shrink_run(inst)
+    housekeeping()
     print(f"report: {inst.dir / 'report.html'}")
     if code != 0:
         return 3
@@ -331,6 +334,46 @@ def cmd_suite(args: argparse.Namespace) -> int:
     return 1 if bad else 0
 
 
+KEEP_RUN_DAYS = 3
+MAX_RUNS_BYTES = 2 * 1024**3
+
+
+def _dir_size(path: Path) -> int:
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file() and not f.is_symlink())
+
+
+def housekeeping() -> None:
+    """Runs after every batch run so the disk cannot fill up unattended.
+
+    Deletes finished runs older than KEEP_RUN_DAYS, then the oldest finished runs while
+    all runs together exceed MAX_RUNS_BYTES. Running runs and runs younger than 6 h stay.
+    """
+    runs_dir = inst_mod.sim_home() / "runs"
+    if not runs_dir.is_dir():
+        return
+    now = time.time()
+    finished = []
+    for run in sorted(p for p in runs_dir.iterdir() if p.is_dir()):
+        meta = Instance(run.name, run).meta()
+        running = bool(meta.get("pid")) and "finished" not in meta and inst_mod._pid_alive(int(meta["pid"]))
+        if not running and now - run.stat().st_mtime > 6 * 3600:
+            finished.append(run)
+    for run in [r for r in finished if now - r.stat().st_mtime > KEEP_RUN_DAYS * 86400]:
+        subprocess.run(["rm", "-rf", str(run)], check=False)
+        finished.remove(run)
+    total = _dir_size(runs_dir)
+    for run in finished:
+        if total <= MAX_RUNS_BYTES:
+            break
+        size = _dir_size(run)
+        subprocess.run(["rm", "-rf", str(run)], check=False)
+        total -= size
+    for inst in inst_mod.list_instances():
+        for shot in (inst.dir / "shots").glob("*.png"):
+            if now - shot.stat().st_mtime > KEEP_RUN_DAYS * 86400:
+                shot.unlink()
+
+
 def cmd_prune(args: argparse.Namespace) -> int:
     runs_dir = inst_mod.sim_home() / "runs"
     runs = sorted(p for p in runs_dir.iterdir() if p.is_dir()) if runs_dir.is_dir() else []
@@ -388,12 +431,15 @@ def cmd_up(args: argparse.Namespace) -> int:
         boot_args += ["--mode", "scaled", "--factor", str(args.speed)]
     elif args.paused and not args.catch_up:
         boot_args += ["--mode", "paused"]
-    launcher = inst_mod.start_live(inst, _python(args.ha), boot_args, int(parse_duration(args.ttl)))
+    ttl_s = int(parse_duration(args.ttl))
+    boot_args += ["--ttl", str(ttl_s)]  # also enforced without systemd
+    launcher = inst_mod.start_live(inst, _python(args.ha), boot_args, ttl_s)
     print(f"starting {args.name} ({launcher}) from {REPO_ROOT} ...", flush=True)
     if not _wait_ready(inst):
         print(f"not ready after {READY_TIMEOUT_S}s; check: sim logs {args.name}", file=sys.stderr)
         return 1
-    print(f"ready: {inst.url()}  (local http://127.0.0.1:{port})")
+    stop_at = datetime.fromtimestamp(time.time() + ttl_s).strftime("%H:%M")
+    print(f"ready: {inst.url()}  (local http://127.0.0.1:{port}), stops by itself at {stop_at} (--ttl)")
     return 0
 
 
@@ -646,6 +692,7 @@ def _parser() -> argparse.ArgumentParser:
         default=300.0,
         help="abort when the sim clock does not move for this many real seconds",
     )
+    run.add_argument("--max-real", default="2h", help="hard limit on real run time")
     run.set_defaults(func=cmd_run)
 
     up = sub.add_parser("up", help="start a live instance (UI on the LAN)")
@@ -657,7 +704,7 @@ def _parser() -> argparse.ArgumentParser:
     up.add_argument("--catch-up", action="store_true", help="turbo until real now, then real time")
     up.add_argument("--paused", action="store_true")
     up.add_argument("--speed", type=float, help="time-lapse factor")
-    up.add_argument("--ttl", default="4h", help="auto-stop after this real time")
+    up.add_argument("--ttl", default="2h", help="auto-stop after this real time (default 2h)")
     up.add_argument("--ha", default=DEFAULT_HA_VERSION)
     up.add_argument("--roommind-src", help="RoomMind code: path or git ref; default: this checkout")
     up.add_argument("--recorder", action="store_true")

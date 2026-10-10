@@ -32,6 +32,7 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--then", default="realtime", choices=sorted(_THEN))
     p.add_argument("--mode", default=None, choices=list(clockmod.MODES))
     p.add_argument("--factor", type=float, default=1.0)
+    p.add_argument("--ttl", type=int, default=0, help="stop HA after this many real seconds (live instances)")
     p.add_argument("--resumed", action="store_true", help=argparse.SUPPRESS)
     return p.parse_args(argv)
 
@@ -51,6 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     if clk.then_action == "stop-now":
         return 0
 
+    _arm_ttl(args.ttl, inst_dir, fresh=not args.resumed)
     os.environ["ROOMMIND_SIM_INSTANCE_DIR"] = str(inst_dir)
     import homeassistant.__main__ as ha_main
 
@@ -103,6 +105,24 @@ def apply_start_args(
         if then == "stop" and target is not None:
             clk.on_target = None
             clk.then_action = "stop-now"
+
+
+def _arm_ttl(ttl_s: int, inst_dir: Path, fresh: bool) -> None:
+    """Real-time auto-stop that works without systemd; in-run restarts keep the deadline."""
+    deadline_file = inst_dir / "state" / "ttl_deadline"
+    real_now = clockmod._real_time()
+    if fresh:
+        if ttl_s <= 0:
+            if deadline_file.is_file():
+                os.unlink(deadline_file)
+            return
+        _write_raw(deadline_file, str(real_now + ttl_s))
+    elif not deadline_file.is_file():
+        return
+    deadline = float(_read_raw(deadline_file))
+    # SIGALRM counts real seconds; the handler turns it into a graceful HA stop.
+    signal.signal(signal.SIGALRM, lambda *_: os.kill(os.getpid(), signal.SIGTERM))
+    signal.alarm(max(1, int(deadline - real_now)))
 
 
 def _read_raw(path: Path) -> str:
