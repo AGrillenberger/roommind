@@ -605,9 +605,10 @@ def _mock_device(hass, setpoint):
     return dev
 
 
-def test_proportional_deadband_helper_disabled_at_comfort():
+def test_proportional_deadband_helper_exact_at_comfort():
     _, ctrl = _make_controller(None)  # cw=70 default
-    assert ctrl._proportional_deadband("climate.x", 18.0, 22.0) is None
+    # 0.0 still marks the send as proportional (setpoint dwell) but compares exactly
+    assert ctrl._proportional_deadband("climate.x", 18.0, 22.0) == 0.0
 
 
 def test_proportional_deadband_helper_values_at_efficiency():

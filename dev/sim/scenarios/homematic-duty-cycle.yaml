@@ -1,7 +1,8 @@
 name: homematic-duty-cycle
 description: >
   Homematic IP TRV (radio duty cycle) on a boiler, MPC with proportional setpoints.
-  Counts commands per hour; bursts exhaust the duty cycle and the TRV rejects frames (#317).
+  Counts commands per hour. Before the proportional setpoint dwell the setpoint jittered every
+  30-60 s and bursts exhausted the duty cycle (#317).
 refs: [317]
 tags: [trv, commands]
 start: 2026-01-12T00:00
@@ -40,5 +41,5 @@ roommind:
       comfort_temp: 19.5
       eco_temp: 17.0
 expect:
-  - {invariant: no_rejected_commands, known_failure: 'candidate (#317 class): proportional setpoint jitters every 30-60 s, bursts exceed the radio duty cycle'}
-  - {invariant: max_commands_per_hour, entity_id: climate.schlafzimmer_trv, limit: 20, known_failure: 'candidate (#317 class): proportional setpoint jitters every 30-60 s, bursts exceed the radio duty cycle'}
+  - {invariant: no_rejected_commands}
+  - {invariant: max_commands_per_hour, entity_id: climate.schlafzimmer_trv, limit: 20}

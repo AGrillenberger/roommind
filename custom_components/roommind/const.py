@@ -85,6 +85,7 @@ AC_BOOST_DELTA_MIN = 3.0  # Tightest AC setpoint cap (°C above/below target) at
 AC_BOOST_DELTA_MAX = 50.0  # Comfort-end AC cap (°C); finite value above any real device range so the cap never binds (inf would break the linear slider interpolation)
 PROPORTIONAL_DEADBAND_C = 0.5  # Minimum proportional setpoint change (°C) to resend, in the gentle regime
 PROPORTIONAL_DEADBAND_NEAR_TARGET_C = 0.2  # Finer proportional deadband (°C) within 1°C of target
+PROPORTIONAL_SETPOINT_DWELL_SECONDS = 300  # Minimum time a proportional setpoint stays on the device before a recomputed one replaces it (one MPC block, #317)
 BOOST_CAP_FALLBACK_STEP = 0.5  # Distance kept below a device's max_temp for proportional heating setpoints when it reports no target_temp_step (#396)
 
 # Update interval in seconds

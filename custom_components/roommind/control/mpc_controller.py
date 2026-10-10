@@ -34,6 +34,7 @@ from ..const import (
     MODE_IDLE,
     PROPORTIONAL_DEADBAND_C,
     PROPORTIONAL_DEADBAND_NEAR_TARGET_C,
+    PROPORTIONAL_SETPOINT_DWELL_SECONDS,
     TargetTemps,
     is_override_active,
     make_roommind_context,
@@ -83,6 +84,9 @@ _active_targets: dict[str, tuple[float | None, float | None]] = {}
 # Devices whose overshoot target the hold already passed on; one send per hold, so a device
 # that does not take the value is not commanded every cycle until the min-run ends.
 _overshoot_sent: set[str] = set()
+# Last proportional setpoint send per device: (monotonic send time, (heat, cool) targets it was
+# computed for). Any other command to the device drops the entry (#317).
+_proportional_sent: dict[str, tuple[float, tuple[float | None, float | None]]] = {}
 # hvac states in which a lower setpoint means more cooling, not less output
 # Outcome of MPCController._call
 _CALL_SENT = "sent"  # a command went to the device
@@ -128,6 +132,7 @@ def _remember_command(entity_id: str, service: str, data: dict) -> None:
         for key in [k for k in _last_by_service if k[0] == entity_id]:
             del _last_by_service[key]
             _sent_at.pop(key, None)
+    _proportional_sent.pop(entity_id, None)
     _last_commands[entity_id] = _cache_entry(service, data)
     _note_applied(entity_id, service, data)
 
@@ -212,6 +217,7 @@ def clear_command_cache() -> None:
     _last_commands.clear()
     _last_by_service.clear()
     _sent_at.clear()
+    _proportional_sent.clear()
     _setpoint_override_warned.clear()
     _active_targets.clear()
     _overshoot_sent.clear()
@@ -1996,19 +2002,55 @@ class MPCController:
         return min(ha_t, ceiling)
 
     def _proportional_deadband(self, eid: str, current_temp: float | None, effective_target: float) -> float | None:
-        """Deadband threshold for a proportional setpoint send, or None to disable.
+        """Deadband for a proportional setpoint send; None marks a send that is not proportional.
 
-        Active only in the gentle regime (approach_rate < 1.0) and never for
-        direct-mode devices or managed mode. Finer near target so the final
-        approach stays regulated.
+        Direct-mode devices and managed mode get None. A proportional send gets
+        0.0 (exact comparison) in the comfort regime (approach_rate >= 1.0) and a
+        threshold in the gentle regime, finer near target so the final approach
+        stays regulated. ``_call`` also applies the setpoint dwell to every
+        proportional send.
         """
-        if self._approach_rate >= 1.0 or eid in self._direct_eids or not self.has_external_sensor:
+        if eid in self._direct_eids or not self.has_external_sensor or current_temp is None:
             return None
-        if current_temp is None:
-            return None
+        if self._approach_rate >= 1.0:
+            return 0.0
         if abs(current_temp - effective_target) <= 1.0:
             return PROPORTIONAL_DEADBAND_NEAR_TARGET_C
         return PROPORTIONAL_DEADBAND_C
+
+    def _current_target_pair(self) -> tuple[float | None, float | None]:
+        targets = self._idle_targets
+        return (targets.heat, targets.cool) if targets is not None else (None, None)
+
+    def _proportional_dwell_active(
+        self, eid: str, service: str, data: dict, state: Any, deadband: float | None
+    ) -> bool:
+        """True when a recomputed proportional setpoint has to wait for the dwell to end.
+
+        The proportional power follows a 5-min deadbeat law, so one 0.1 K sensor
+        step moves the setpoint by 2 K or more. Resent every 30 s cycle that
+        exhausts radio duty cycles (#317) while a radiator cannot follow anyway.
+        The dwell keeps the last value for one MPC block. Never delayed: the
+        first setpoint after any other command (mode change, idle, hold), a
+        changed room target, a device that is not running in the commanded mode,
+        and devices without usable state, whose sent-command cache (#416) stays
+        as it is.
+        """
+        if service != "set_temperature" or deadband is None or "temperature" not in data:
+            return False
+        if state is None or _should_use_cache(state):
+            return False
+        record = _proportional_sent.get(eid)
+        if record is None or _now() - record[0] >= PROPORTIONAL_SETPOINT_DWELL_SECONDS:
+            return False
+        sent_heat, sent_cool = record[1]
+        heat, cool = self._current_target_pair()
+        if _target_moved(sent_heat, heat) or _target_moved(sent_cool, cool):
+            return False
+        desired_mode = data.get("hvac_mode")
+        if desired_mode is not None:
+            return bool(state.state == desired_mode)
+        return bool(state.state != "off")
 
     async def _call(self, service: str, data: dict, *, temp_intent: str = "", deadband: float | None = None) -> str:
         """Send a climate service call unless the device already holds the value.
@@ -2254,6 +2296,15 @@ class MPCController:
                         if c_temp is not None and d_temp is not None and round(c_temp, 1) == round(d_temp, 1):
                             skip = True
 
+        if not skip and eid and self._proportional_dwell_active(eid, service, data, state, deadband):
+            _LOGGER.debug(
+                "Area '%s': keeping proportional setpoint on '%s' (changed less than %ds ago)",
+                self._area_id,
+                eid,
+                PROPORTIONAL_SETPOINT_DWELL_SECONDS,
+            )
+            return _CALL_SKIPPED
+
         if skip:
             if confirmed and eid:
                 _note_applied(eid, service, data)
@@ -2275,6 +2326,8 @@ class MPCController:
                 _remember_command(eid, service, data)
                 if self._idle_targets is not None:
                     _active_targets[eid] = (self._idle_targets.heat, self._idle_targets.cool)
+                if deadband is not None and service == "set_temperature" and "temperature" in data:
+                    _proportional_sent[eid] = (_now(), self._current_target_pair())
         except Exception:  # noqa: BLE001
             _LOGGER.warning(
                 "Area '%s': climate.%s failed on '%s'",
