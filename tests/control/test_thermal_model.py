@@ -2122,3 +2122,70 @@ def test_ekf_mode_transition_does_not_inflate_alpha():
     # alpha must be near truth (0.2), not drifted to the upper bound
     assert ekf._x[1] < 1.0, f"alpha drifted far above true value: {ekf._x[1]}"
     assert ekf._x[1] > 0.05, f"alpha collapsed: {ekf._x[1]}"
+
+
+# ---------------------------------------------------------------------------
+# Unexcited parameters get no Kalman gain (cross-covariance leak)
+# ---------------------------------------------------------------------------
+
+
+def _ekf_with_cross_covariance() -> ThermalEKF:
+    """Initialised EKF whose parameters are all correlated with T and alpha,
+    as after a few days of mixed sunny/heating/occupied data."""
+    ekf = ThermalEKF()
+    ekf.update(T_measured=20.0, T_outdoor=5.0, mode="idle", dt_minutes=3.0)
+    ekf._x[1] = 0.02
+    for i in range(2, 6):
+        ekf._P[0][i] = ekf._P[i][0] = 0.05
+        ekf._P[1][i] = ekf._P[i][1] = 0.001
+    return ekf
+
+
+@pytest.mark.parametrize(
+    ("index", "mode", "kwargs"),
+    [
+        (4, "idle", {"q_solar": 0.0}),
+        (2, "idle", {"q_residual": 0.0}),
+        (3, "heating", {}),
+        (5, "idle", {"q_occupancy": 0.0}),
+    ],
+    ids=["beta_s_at_night", "beta_h_plain_idle", "beta_c_while_heating", "beta_o_unoccupied"],
+)
+def test_ekf_unexcited_parameter_ignores_innovation_despite_cross_covariance(index, mode, kwargs):
+    ekf = _ekf_with_cross_covariance()
+    before = ekf._x[index]
+    for _ in range(10):
+        ekf.update(T_measured=21.0, T_outdoor=5.0, mode=mode, dt_minutes=3.0, **kwargs)
+    assert ekf._x[index] == before
+
+
+def test_ekf_excited_parameters_still_learn_from_cross_covariance_state():
+    ekf = _ekf_with_cross_covariance()
+    before_s, before_h = ekf._x[4], ekf._x[2]
+    for _ in range(10):
+        ekf.update(T_measured=21.0, T_outdoor=5.0, mode="heating", dt_minutes=3.0, q_solar=0.3)
+    assert ekf._x[4] != before_s
+    assert ekf._x[2] != before_h
+
+
+def test_ekf_gated_update_keeps_covariance_symmetric_psd():
+    ekf = _ekf_with_cross_covariance()
+    p_beta_s = ekf._P[4][4]
+    ekf.update(T_measured=21.0, T_outdoor=5.0, mode="idle", dt_minutes=3.0)
+    P = ekf._P
+    for i in range(6):
+        assert P[i][i] > 0
+        for j in range(6):
+            assert P[i][j] == pytest.approx(P[j][i])
+    # An unobserved parameter gains no information: its variance stays put
+    assert P[4][4] == pytest.approx(p_beta_s)
+
+
+def test_ekf_update_step_without_predict_uses_full_gain():
+    """_update_step alone (no predict yet) treats every state as observable."""
+    ekf = ThermalEKF()
+    ekf._initialized = True
+    ekf._P[0][4] = ekf._P[4][0] = 0.1
+    before = ekf._x[4]
+    ekf._update_step(ekf._x[0] + 1.0)
+    assert ekf._x[4] > before

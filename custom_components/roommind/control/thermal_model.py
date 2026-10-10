@@ -321,6 +321,8 @@ class ThermalEKF:
         self._initialized: bool = False
         self._k_window: float = self._K_WINDOW_DEFAULT
         self._k_window_n: int = 0
+        # Which states the last predict step could observe (F[0][i] != 0).
+        self._excited: list[bool] = [True] * self._N
 
     # -- public API ----------------------------------------------------------
 
@@ -728,6 +730,7 @@ class ThermalEKF:
             q_residual=q_residual,
             q_occupancy=q_occupancy,
         )
+        self._excited = [True, True] + [F[0][i] != 0.0 for i in range(2, self._N)]
 
         # Covariance prediction: P = F @ P @ F^T + Q_noise
         N = self._N
@@ -793,21 +796,23 @@ class ThermalEKF:
         if S < 1e-12:
             return  # Numerical safety
 
-        # Kalman gain: K = P[:, 0] / S
-        K = [P[i][0] / S for i in range(N)]
+        # Kalman gain: K = P[:, 0] / S. Parameters the step could not observe
+        # get no gain: otherwise their cross-covariance with T and alpha lets
+        # every unmodelled disturbance leak into them (beta_s learned at night,
+        # beta_h during plain idle; a windowless room ended up with beta_s ~4).
+        K = [P[i][0] / S if self._excited[i] else 0.0 for i in range(N)]
 
         # State update: x = x + K * innovation
         for i in range(N):
             self._x[i] += K[i] * innovation
 
-        # Covariance update: P = (I - K @ H) @ P
-        # Since H = [1, 0, 0, 0, 0, 0]:  P_new[i][j] = P[i][j] - K[i] * P[0][j]
-        P_new = [[P[i][j] - K[i] * P[0][j] for j in range(N)] for i in range(N)]
-
-        # Add K * R_eff * K^T for numerical stability (Joseph-form correction)
-        for i in range(N):
-            for j in range(N):
-                P_new[i][j] += K[i] * R_eff * K[j]
+        # Joseph form (I - K H) P (I - K H)^T + K R K^T, valid for the gated gain,
+        # plus the extra K R K^T this filter has always added; with the full
+        # gain this reduces to the previous P - K P[0] + K R K^T.
+        P_new = [
+            [P[i][j] - K[i] * P[0][j] - P[i][0] * K[j] + K[i] * (P[0][0] + 2.0 * R_eff) * K[j] for j in range(N)]
+            for i in range(N)
+        ]
 
         self._P = P_new
 
