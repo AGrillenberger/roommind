@@ -731,6 +731,11 @@ class ThermalEKF:
             q_occupancy=q_occupancy,
         )
         self._excited = [True, True] + [F[0][i] != 0.0 for i in range(2, self._N)]
+        # Solar gain is learned from sunny steps without heating only: while
+        # heating, the innovation is dominated by how far the emitter's real
+        # output differs from beta_h * power_fraction, and beta_s would absorb it.
+        solar_learnable = q_solar > 0 and mode != "heating"
+        self._excited[4] = solar_learnable
 
         # Covariance prediction: P = F @ P @ F^T + Q_noise
         N = self._N
@@ -748,7 +753,7 @@ class ThermalEKF:
             q_alpha,
             self._Q_BETA_H if (mode == "heating" or (mode == "idle" and q_residual > 0)) else 0.0,
             self._Q_BETA_C if mode == "cooling" else 0.0,
-            self._Q_BETA_S if q_solar > 0 else 0.0,
+            self._Q_BETA_S if solar_learnable else 0.0,
             self._Q_BETA_O if q_occupancy > 0 else 0.0,
         ]
 

@@ -2161,11 +2161,27 @@ def test_ekf_unexcited_parameter_ignores_innovation_despite_cross_covariance(ind
 
 def test_ekf_excited_parameters_still_learn_from_cross_covariance_state():
     ekf = _ekf_with_cross_covariance()
-    before_s, before_h = ekf._x[4], ekf._x[2]
+    before_h = ekf._x[2]
     for _ in range(10):
-        ekf.update(T_measured=21.0, T_outdoor=5.0, mode="heating", dt_minutes=3.0, q_solar=0.3)
-    assert ekf._x[4] != before_s
+        ekf.update(T_measured=21.0, T_outdoor=5.0, mode="heating", dt_minutes=3.0)
     assert ekf._x[2] != before_h
+
+    ekf = _ekf_with_cross_covariance()
+    before_s = ekf._x[4]
+    for _ in range(10):
+        ekf.update(T_measured=21.0, T_outdoor=5.0, mode="idle", dt_minutes=3.0, q_solar=0.3)
+    assert ekf._x[4] > before_s
+
+
+def test_ekf_beta_s_not_learned_while_heating_in_sun():
+    """Heater mismatch during sunny heating must not end up in beta_s (sim: windowless room 1.0 -> 2.7)."""
+    ekf = _ekf_with_cross_covariance()
+    before, p_before = ekf._x[4], ekf._P[4][4]
+    for _ in range(10):
+        ekf.update(T_measured=21.0, T_outdoor=5.0, mode="heating", dt_minutes=3.0, q_solar=0.05)
+    assert ekf._x[4] == before
+    # No drift noise either: the variance only follows the T/alpha propagation
+    assert ekf._P[4][4] <= p_before
 
 
 def test_ekf_gated_update_keeps_covariance_symmetric_psd():
