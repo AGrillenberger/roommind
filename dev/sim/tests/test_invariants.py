@@ -104,6 +104,16 @@ def test_window_open_pause():
     assert window_open_pauses(run) == []
 
 
+def test_window_open_pause_allows_resume_between_close_and_next_sample():
+    """Windows close between two samples; a resume in that gap is not a violation."""
+    run = _run([False] * 30, windows=[False] * 5 + [True] * 15 + [False] * 10)
+    end = run.start + 60 * 21  # first sample that shows the window closed
+    run.observer = [{"t": end - 30, "rooms": {"r": {"mode": "heating"}}}]
+    assert window_open_pauses(run) == []
+    run.observer = [{"t": end - 90, "rooms": {"r": {"mode": "heating"}}}]
+    assert len(window_open_pauses(run)) == 1
+
+
 def test_command_rate():
     run = _run([False] * 70, commands=[(30 * i, "set_temperature", {"temperature": 22}) for i in range(20)])
     assert max_commands_per_hour(run, limit=12)

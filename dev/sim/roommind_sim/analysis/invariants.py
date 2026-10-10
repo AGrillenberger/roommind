@@ -275,9 +275,14 @@ def no_rejected_commands(run: RunData) -> list[Violation]:
 
 
 def window_open_pauses(run: RunData, grace_s: float = 120.0) -> list[Violation]:
-    """While a window is open (past its delay) the room is idle (#437)."""
+    """While a window is open (past its delay) the room is idle (#437).
+
+    Intervals end at the first sample that shows the window closed, so the real close
+    lies up to one sample interval earlier; RoomMind may already resume there.
+    """
     out: list[Violation] = []
     rooms_cfg = run.rooms_config()
+    sample_s = float(run.scenario.sample_interval)
     for area, intervals in run.window_open_intervals().items():
         cfg = rooms_cfg.get(area) or {}
         if not cfg.get("window_sensors"):
@@ -285,7 +290,7 @@ def window_open_pauses(run: RunData, grace_s: float = 120.0) -> list[Violation]:
         delay = float(cfg.get("window_open_delay", 0)) + grace_s
         for iv in intervals:
             for o in run.observer:
-                if iv.start + delay <= o["t"] <= iv.end:
+                if iv.start + delay <= o["t"] <= iv.end - sample_s:
                     room = o["rooms"].get(area) or {}
                     if room.get("mode") not in ("idle", None):
                         out.append(
