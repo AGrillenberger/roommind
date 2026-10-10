@@ -108,6 +108,7 @@ export class RsAnalytics extends LitElement {
                         .data=${this._data}
                         .language=${l}
                         .controlMode=${this.controlMode}
+                        .managed=${!this.rooms[this._selectedRoom]?.temperature_sensor}
                       ></rs-analytics-model>`
                     : nothing
                 }
