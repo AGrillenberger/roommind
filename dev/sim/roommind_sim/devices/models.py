@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -115,7 +116,11 @@ class Ufh(SimDevice):
 @dataclass
 class SplitAc(SimDevice):
     """Inverter split AC. Controls on its return-air sensor (offset while heating),
-    modulates, has its own deadband and minimum run, dehumidifies while cooling."""
+    modulates, has its own deadband and minimum run, dehumidifies while cooling.
+
+    The return-air offset builds up and fades with ``sensor_offset_tau_s``: warm air
+    collects at the intake while the compressor runs and is still there right after
+    it stops."""
 
     model = "ac"
 
@@ -125,14 +130,23 @@ class SplitAc(SimDevice):
         self.on_since = 0.0
         self.modulation = 0.0
         self.coil_water_kg = 0.0
+        self.sensor_offset_k = 0.0
+
+    def _update_sensor_offset(self, dt: float) -> None:
+        p = self.spec.params
+        goal = 0.0
+        if self.running_mode == "heat":
+            goal = float(p.get("sensor_offset_heat_k", 1.5))
+        elif self.running_mode == "cool":
+            goal = float(p.get("sensor_offset_cool_k", 0.0))
+        tau = float(p.get("sensor_offset_tau_s", 0.0))
+        if tau <= 0:
+            self.sensor_offset_k = goal
+        else:
+            self.sensor_offset_k += (goal - self.sensor_offset_k) * (1 - math.exp(-dt / tau))
 
     def _sensor(self, t_air: float) -> float:
-        p = self.spec.params
-        if self.running_mode == "heat":
-            return t_air + float(p.get("sensor_offset_heat_k", 1.5))
-        if self.running_mode == "cool":
-            return t_air + float(p.get("sensor_offset_cool_k", 0.0))
-        return t_air
+        return t_air + self.sensor_offset_k
 
     def _wanted(self, reading: float) -> str | None:
         p = self.spec.params
@@ -166,6 +180,7 @@ class SplitAc(SimDevice):
         p = self.spec.params
         z = env.zone
         t_out = env.outdoor.temp_c
+        self._update_sensor_offset(dt)
         reading = self._sensor(z.t_air)
         self.sensor_c = round(reading * 2) / 2
         wanted = self._wanted(reading) if self.available and self.hvac_mode != "off" else None
@@ -182,14 +197,11 @@ class SplitAc(SimDevice):
         electric = 0.0
         moisture = 0.0
         if self.running_mode:
-            err = abs(
-                (
-                    self.to_c(self.target_low)
-                    if self.running_mode == "heat" and self.target_low is not None
-                    else self.target_c
-                )
-                - reading
-            )
+            if self.running_mode == "heat":
+                sp = self.to_c(self.target_low) if self.target_low is not None else self.target_c
+                err = max(0.0, sp - reading)
+            else:
+                err = max(0.0, reading - self.target_c)
             lo = float(p.get("min_modulation", 0.3))
             self.modulation = 0.4 if self.hvac_mode == "dry" else clamp(lo + float(p.get("kp", 0.6)) * err, lo, 1.0)
             if self.running_mode == "heat":
@@ -232,12 +244,18 @@ class SplitAc(SimDevice):
         return {self.room: Gains(conv_w=heat_w, moisture_kg_s=moisture)}
 
     def _model_state(self) -> dict[str, Any]:
-        return {"running_mode": self.running_mode, "on_since": self.on_since, "coil_water_kg": self.coil_water_kg}
+        return {
+            "running_mode": self.running_mode,
+            "on_since": self.on_since,
+            "coil_water_kg": self.coil_water_kg,
+            "sensor_offset_k": self.sensor_offset_k,
+        }
 
     def _restore_model_state(self, data: dict[str, Any]) -> None:
         self.running_mode = data.get("running_mode")
         self.on_since = data.get("on_since", 0.0)
         self.coil_water_kg = data.get("coil_water_kg", 0.0)
+        self.sensor_offset_k = data.get("sensor_offset_k", 0.0)
 
 
 @dataclass

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from helpers import run, world
 
 
@@ -91,12 +92,32 @@ def test_split_ac_holds_internal_min_run_and_reads_warm_while_heating():
     d.call("set_temperature", {"temperature": 21, "hvac_mode": "heat"}, w.now)
     run(w, 30)
     assert d.running_mode == "heat"
+    run(w, 120)
     assert d.sensor_c >= 21.5  # return-air offset while heating
-    run(w, 30)
     assert d.running_mode == "heat"  # internal min run, although the sensor is past the setpoint
     run(w, 300)
     assert d.running_mode is None
     assert d.counters.starts == 1
+
+
+def test_split_ac_throttles_to_minimum_past_its_setpoint():
+    w, d = _one("generic_split_ac", temp=21.0)
+    d.call("set_temperature", {"temperature": 22, "hvac_mode": "heat"}, w.now)
+    run(w, 160)
+    assert d.running_mode == "heat" and d.sensor_c > 22
+    assert d.modulation == pytest.approx(0.3)
+
+
+def test_split_ac_return_air_offset_builds_up_and_fades():
+    w, d = _one("generic_split_ac", temp=17.0)
+    d.call("set_temperature", {"temperature": 30, "hvac_mode": "heat"}, w.now)
+    run(w, 20)
+    assert 0 < d.sensor_offset_k < 0.5
+    run(w, 900)
+    assert d.sensor_offset_k == pytest.approx(1.5, abs=0.05)
+    d.call("set_hvac_mode", {"hvac_mode": "off"}, w.now)
+    run(w, 60)
+    assert 0.5 < d.sensor_offset_k < 1.5
 
 
 def test_split_ac_cooling_dehumidifies():
