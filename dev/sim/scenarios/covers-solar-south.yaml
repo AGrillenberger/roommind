@@ -20,7 +20,11 @@ house:
       initial: {temperature: 25.0, mass_temperature: 25.0}
       windows: [{orientation: S, area_m2: 6, g_value: 0.6}]
       covers: [{entity_id: cover.wohnzimmer_raffstore, profile: venetian_blind}]
-      devices: [{entity_id: climate.wz_ac, profile: generic_split_ac}]
+      # A small unit that cannot hold the room alone on a sunny afternoon. RoomMind shades
+      # when the MPC plan (cooling included) still overshoots; with a 3.5 kW unit and the
+      # solar gain learned correctly the AC holds 24 C and the blind stays up. The old
+      # 3.5 kW setup only shaded because beta_s was learned ~10x too high.
+      devices: [{entity_id: climate.wz_ac, profile: generic_split_ac, cool_capacity_w: 1500}]
       sensors:
         temperature: {entity_id: sensor.wz_temp}
         occupancy: {entity_id: binary_sensor.wz_praesenz}
