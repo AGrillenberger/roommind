@@ -335,10 +335,14 @@ def cmd_prune(args: argparse.Namespace) -> int:
     runs_dir = inst_mod.sim_home() / "runs"
     runs = sorted(p for p in runs_dir.iterdir() if p.is_dir()) if runs_dir.is_dir() else []
     keep = set(runs[-args.keep :]) if args.keep else set()
-    cutoff = time.time() - parse_duration(args.older_than) if args.older_than else None
-    removed = 0
+    # Never delete recent or still running runs: parallel agents/sessions use them as evidence.
+    cutoff = time.time() - parse_duration(args.older_than or "6h")
+    removed = skipped = 0
     for run in runs:
-        if run in keep or (cutoff is not None and run.stat().st_mtime > cutoff):
+        meta = Instance(run.name, run).meta()
+        running = bool(meta.get("pid")) and "finished" not in meta and inst_mod._pid_alive(int(meta["pid"]))
+        if run in keep or running or run.stat().st_mtime > cutoff:
+            skipped += run not in keep
             continue
         subprocess.run(["rm", "-rf", str(run)], check=True)
         removed += 1
@@ -347,7 +351,9 @@ def cmd_prune(args: argparse.Namespace) -> int:
         for shot in sorted((inst.dir / "shots").glob("*.png"))[: -args.keep_shots or None]:
             shot.unlink()
             shots += 1
-    print(f"removed {removed} run(s) and {shots} screenshot(s); kept {len(runs) - removed} run(s)")
+    print(
+        f"removed {removed} run(s) and {shots} screenshot(s); kept {len(runs) - removed} run(s) ({skipped} recent or running)"
+    )
     return 0
 
 
@@ -722,7 +728,9 @@ def _parser() -> argparse.ArgumentParser:
 
     prune = sub.add_parser("prune", help="delete old runs and screenshots")
     prune.add_argument("--keep", type=int, default=20, help="keep the newest N runs")
-    prune.add_argument("--older-than", help="only delete runs older than this, e.g. 7d")
+    prune.add_argument(
+        "--older-than", help="only delete runs older than this (default 6h; recent and running runs are always kept)"
+    )
     prune.add_argument("--keep-shots", type=int, default=30)
     prune.set_defaults(func=cmd_prune)
 
