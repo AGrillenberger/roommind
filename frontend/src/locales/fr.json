@@ -343,7 +343,7 @@
   "settings.control_mode": "Mode de contrôle",
   "settings.control_mode_simple": "Simple (Bang-Bang)",
   "settings.control_mode_mpc": "Intelligent (MPC)",
-  "settings.control_mode_hint": "Intelligent : le MPC apprend le comportement thermique de chaque pièce et anticipe (régulation marche/arrêt tant qu'il apprend). Simple : uniquement une régulation marche/arrêt avec hystérésis ; le modèle continue d'apprendre en arrière-plan mais ne prend aucune décision.",
+  "settings.control_mode_hint": "Intelligent : le MPC apprend le comportement thermique de chaque pièce et anticipe (régulation marche/arrêt tant qu'il apprend). Simple : uniquement une régulation marche/arrêt avec hystérésis ; le modèle continue d'apprendre en arrière-plan mais ne prend aucune décision, et les stores automatiques utilisent une estimation solaire simplifiée au lieu de la prévision MPC.",
   "settings.comfort_weight": "Priorité",
   "settings.comfort_weight_comfort": "Confort",
   "settings.comfort_weight_efficiency": "Efficacité",

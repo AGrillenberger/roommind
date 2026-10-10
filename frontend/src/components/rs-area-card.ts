@@ -466,7 +466,8 @@ export class RsAreaCard extends LitElement {
       return html`<div class="waiting">${localize("card.waiting", this.hass.language)}</div>`;
     }
 
-    const showMpcIcon = this.controlMode === "mpc";
+    // Managed rooms (no external sensor) never run MPC, so "learning" would stay forever.
+    const showMpcIcon = this.controlMode === "mpc" && !!this.config?.temperature_sensor;
 
     return html`
       <div class="temp-section">

@@ -343,7 +343,7 @@
   "settings.control_mode": "Control Mode",
   "settings.control_mode_simple": "Simple (Bang-Bang)",
   "settings.control_mode_mpc": "Intelligent (MPC)",
-  "settings.control_mode_hint": "Intelligent: MPC learns each room's thermal behavior and plans ahead (on/off control while it is still learning). Simple: on/off control with hysteresis only; the model keeps learning in the background but does not make decisions.",
+  "settings.control_mode_hint": "Intelligent: MPC learns each room's thermal behavior and plans ahead (on/off control while it is still learning). Simple: on/off control with hysteresis only; the model keeps learning in the background but does not make decisions, and automatic blinds use a simpler solar estimate instead of the MPC forecast.",
   "settings.comfort_weight": "Priority",
   "settings.comfort_weight_comfort": "Comfort",
   "settings.comfort_weight_efficiency": "Efficiency",
