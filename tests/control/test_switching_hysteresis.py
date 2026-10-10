@@ -108,15 +108,15 @@ def test_preheat_for_a_rising_target_may_start_early(monkeypatch):
 @pytest.mark.parametrize(
     ("temp", "expected"),
     [
+        (24.0, MODE_IDLE),
         (24.1, MODE_IDLE),
-        (24.2, MODE_IDLE),
-        (24.200000000000003, MODE_IDLE),
-        (24.3, MODE_COOLING),
-        (24.299999999999997, MODE_COOLING),
+        (24.100000000000005, MODE_IDLE),
+        (24.2, MODE_COOLING),
+        (24.199999999999996, MODE_COOLING),
     ],
 )
 def test_cooling_starts_only_past_the_hysteresis(monkeypatch, temp, expected):
-    """Cooling always runs on an AC: its air node needs the wider bang-bang hysteresis."""
+    """Cooling starts one sensor step past the target; a wider band let the sun push the room over it."""
     _fake_plan(monkeypatch, MODE_COOLING)
     mode, _ = _controller(COOL_ROOM, outdoor_temp=30.0)._evaluate_mpc(temp, TargetTemps(heat=None, cool=24.0))
     assert mode == expected

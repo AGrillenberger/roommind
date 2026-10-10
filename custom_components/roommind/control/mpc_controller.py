@@ -761,10 +761,11 @@ SAFETY_GUARD_MIN_BLOCKS = 6  # Minimum guard horizon (30 min floor)
 GUARD_PREDICTION_MARGIN = 0.2  # °C margin for prediction-based guard bypass
 HARD_OVERSHOOT_CEILING = 1.0  # °C — model-independent max overshoot before forced idle
 # A fast system only starts once the room is this far past the target: the optimizer
-# alone switched at the target itself, every other cycle. One sensor step for TRVs; an
-# AC heats and cools the air node directly, which drops back 0.2-0.3 K right after a
-# stop, so any run an AC takes part in (also TRV + heat pump rooms, orchestrated or
-# not) uses the bang-bang hysteresis.
+# alone switched at the target itself, every other cycle. One sensor step for TRVs and
+# for cooling; an AC heating the air node sees it drop back 0.2-0.3 K right after a
+# stop, so heating that an AC takes part in (also TRV + heat pump rooms, orchestrated
+# or not) uses the bang-bang hysteresis. Cooling with 0.2 K let a sunny room sit above
+# the cool target almost three times as long for ~7 % fewer starts (sim ekf-summer-ac).
 MPC_START_HYSTERESIS = 0.1
 _TEMP_EPSILON = 1e-6  # sensor floats like 20.899999999999 still read 20.9
 
@@ -1263,7 +1264,7 @@ class MPCController:
                     return MODE_IDLE, 0.0
         elif action == MODE_COOLING:
             if self.previous_mode != MODE_COOLING and not cool_falling:
-                if current_temp < cool_now + BANGBANG_COOL_HYSTERESIS + _TEMP_EPSILON:
+                if current_temp < cool_now + MPC_START_HYSTERESIS + _TEMP_EPSILON:
                     return MODE_IDLE, 0.0
         elif (
             not slow_heat
