@@ -191,7 +191,7 @@ def _lines(metrics: dict[str, Any], warnings: list[dict[str, Any]]) -> list[str]
     lines = []
     for area, m in metrics["rooms"].items():
         lines.append(
-            f"room {area}: {m['temp_min']}..{m['temp_max']} °C, under {m['undershoot_kh']} Kh, over heat+0.5 {m['heat_overshoot_kh']} Kh, over cool {m['overshoot_kh']} Kh, in band {m['in_band_pct']}%"
+            f"room {area}: {m['temp_min']}..{m['temp_max']} °C, under {m['undershoot_kh']} Kh, over heat+0.5 {m['heat_overshoot_kh']} Kh (+{m['heat_coast_kh']} Kh coasting after setback), over cool {m['overshoot_kh']} Kh, in band {m['in_band_pct']}%"
             + (f", pred MAE {m['prediction_mae_30m']} K" if m.get("prediction_mae_30m") is not None else "")
         )
     for eid, m in metrics["devices"].items():
@@ -202,7 +202,8 @@ def _lines(metrics: dict[str, Any], warnings: list[dict[str, Any]]) -> list[str]
     for area, m in metrics["model"].items():
         if m["learned_alpha_per_h"] is not None:
             lines.append(
-                f"model {area}: alpha learned {m['learned_alpha_per_h']} vs lumped truth {m['truth_alpha_per_h']} 1/h ({m['n_updates']} updates)"
+                f"model {area}: alpha learned {m['learned_alpha_per_h']} vs lumped truth {m['truth_alpha_per_h']} 1/h, "
+                f"beta_s learned {m['learned_beta_s']} vs truth {m['truth_beta_s']} K/h per kW/m² ({m['n_updates']} updates)"
             )
     for w in warnings:
         lines.append(f"WARNING {w['invariant']}: {w['count']}x, e.g. {w['violations'][0]['detail']}")

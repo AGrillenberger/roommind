@@ -41,7 +41,8 @@ roommind:
       eco_temp: 19.0
 expect:
   - {metric: comfort.undershoot_kh, room: wohnzimmer, max: 25}
-  - {metric: comfort.heat_overshoot_kh, room: wohnzimmer, max: 15, known_failure: 'needs analysis: ~0.5 K average overshoot above the heat target with underfloor heating (slab residual + solar)'}
+  - {metric: comfort.heat_overshoot_kh, room: wohnzimmer, max: 15}
   - {metric: model.learned_alpha_per_h, room: wohnzimmer, min: 0.005, max: 0.02}
+  - {metric: model.learned_beta_s, room: wohnzimmer, max: 8, label: slab heat not booked as solar gain (truth ~3.4)}
   - {metric: room.temp_max, room: wohnzimmer, max: 23.5}
   - {invariant: target_never_empty}
