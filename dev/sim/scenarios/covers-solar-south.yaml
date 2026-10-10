@@ -21,9 +21,9 @@ house:
       windows: [{orientation: S, area_m2: 6, g_value: 0.6}]
       covers: [{entity_id: cover.wohnzimmer_raffstore, profile: venetian_blind}]
       # A small unit that cannot hold the room alone on a sunny afternoon. RoomMind shades
-      # when the MPC plan (cooling included) still overshoots; with a 3.5 kW unit and the
-      # solar gain learned correctly the AC holds 24 C and the blind stays up. The old
-      # 3.5 kW setup only shaded because beta_s was learned ~10x too high.
+      # only when the MPC plan, cooling included, still overshoots; a 3.5 kW unit holds the
+      # target, so the blind stayed up once the controller stopped toggling the AC every
+      # cycle (it shaded before only with that toggling plus a ~10x solar gain estimate).
       devices: [{entity_id: climate.wz_ac, profile: generic_split_ac, cool_capacity_w: 1500}]
       sensors:
         temperature: {entity_id: sensor.wz_temp}
@@ -41,13 +41,14 @@ roommind:
       temperature_sensor: sensor.wz_temp
       occupancy_sensors: [binary_sensor.wz_praesenz]
       climate_mode: cool_only
-      comfort_temp: 24.5
-      eco_temp: 27.0
+      comfort_cool: 24.5   # what the panel writes for cool_only rooms
+      eco_cool: 27.0
       covers: [cover.wohnzimmer_raffstore]
       covers_auto_enabled: true
 timeline:
-  # day 3: someone opens the shaded blind for the balcony door, later closes it for the night
-  - {at: "+2d14h", do: cover.manual, entity_id: cover.wohnzimmer_raffstore, position: 100}
+  # day 3: someone opens the shaded blind for the balcony door, later closes it for the night.
+  # Shading starts between 12:00 and 14:10 depending on the weather seed; at 15:00 it runs on all.
+  - {at: "+2d15h", do: cover.manual, entity_id: cover.wohnzimmer_raffstore, position: 100}
   - {at: "+2d21h", do: cover.manual, entity_id: cover.wohnzimmer_raffstore, position: 10}
 expect:
   - {invariant: no_rejected_commands}
@@ -61,7 +62,7 @@ expect:
   - {check: "cover('cover.wohnzimmer_raffstore').position > 98 and room.wohnzimmer.cover_reason != 'user_position_hold'", at: "+1d23h", label: open at night (day 2)}
   - {check: "cover('cover.wohnzimmer_raffstore').position > 98", at: "+2d20h30m", label: open in the evening (day 3)}
   # Genuine manual moves are respected
-  - {check: "room.wohnzimmer.cover_auto_paused == true", at: "+2d14h05m", label: manual opening pauses automatic control}
-  - {check: "cover('cover.wohnzimmer_raffstore').position > 90", at: "+2d14h50m", label: manual opening is kept during the pause}
+  - {check: "room.wohnzimmer.cover_auto_paused == true", at: "+2d15h05m", label: manual opening pauses automatic control}
+  - {check: "cover('cover.wohnzimmer_raffstore').position > 90", at: "+2d15h50m", label: manual opening is kept during the pause}
   - {check: "room.wohnzimmer.cover_auto_paused == true", at: "+2d21h05m", label: manual closing pauses automatic control}
   - {check: "cover('cover.wohnzimmer_raffstore').position < 20 and room.wohnzimmer.cover_auto_paused == false", at: "+2d23h30m", label: manual night position is kept after the pause}
