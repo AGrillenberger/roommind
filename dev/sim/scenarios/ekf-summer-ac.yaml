@@ -1,0 +1,23 @@
+name: ekf-summer-ac
+extends: covers-solar-south
+description: >
+  Same south room, but with an AC that can hold the target on its own, over ten summer
+  days. While cooling, the AC keeps the air ~1.8 K below the building mass, and the heat
+  flowing from the mass into the air is not part of the one-node model: the EKF books
+  it as solar gain by day and as a higher loss coefficient otherwise (true beta_s ~1.2,
+  learned 13-23, already on main). Gating beta_s while cooling only halves it, so the
+  fix needs an air/mass offset state (2R2C) or a bias term. Kept as a marker for that.
+refs: [35]
+tags: [ac, model, solar]
+duration: 10d
+house:
+  rooms:
+    wohnzimmer:
+      devices: [{entity_id: climate.wz_ac, profile: generic_split_ac, cool_capacity_w: 3500}]
+timeline: []
+expect:
+  # seeds learn 0.3-3.5 (truth ~1.3)
+  - {metric: model.learned_beta_s, room: wohnzimmer, max: 5.0, label: solar gain stays near the truth with a strong AC}
+  - {metric: model.learned_alpha_per_h, room: wohnzimmer, max: 0.05, known_failure: 'longer cooling runs: the air rebounds towards the mass after each run and the one-node model books it as loss (needs an AC rebound term or 2R2C)'}
+  # 5.2-5.8 Kh with cooling starting 0.1 K past the target (seeds 1, 2), ~14 Kh with 0.2 K
+  - {metric: comfort.overshoot_kh, room: wohnzimmer, max: 9, label: cooling keeps the room near its target}
