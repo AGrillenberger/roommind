@@ -323,6 +323,17 @@ class MPCOptimizer:
             and bool(self.heating_system_type)
         )
         heating_duration_minutes = self.min_run_blocks * dt_minutes
+        if action != MODE_IDLE and not synthesis_enabled:
+            Q *= self._hypothesis_power_fraction(
+                action,
+                T_room,
+                T_outdoor,
+                heat_target if action == MODE_HEATING else cool_target,
+                dt_minutes,
+                q_solar=solar[0] if solar else 0.0,
+                q_residual=residual[0] if residual else 0.0,
+                q_occupancy=occupancy[0] if occupancy else 0.0,
+            )
 
         for j in range(lookahead):
             qs = solar[j] if j < len(solar) else 0.0
@@ -369,6 +380,38 @@ class MPCOptimizer:
                 total_cost += self.w_energy * abs(Q) / 1000.0
 
         return total_cost
+
+    def _hypothesis_power_fraction(
+        self,
+        action: str,
+        T_room: float,
+        T_outdoor: float,
+        target: float,
+        dt_minutes: float,
+        *,
+        q_solar: float,
+        q_residual: float,
+        q_occupancy: float,
+    ) -> float:
+        """Power fraction a HEATING/COOLING decision would actually be applied with.
+
+        ``optimize`` applies the closed-form proportional power, so the candidate is
+        judged at that power. Judging it at full power made a strong device (large
+        learned Q, e.g. an AC heating the air node) look like it always overshoots, so
+        idle won and the room sat below target. Without a proportional answer for
+        this block (already at target, pre-heating for a later target) the candidate
+        keeps full power as before.
+        """
+        pf, mode = self.compute_optimal_power(
+            T_room,
+            T_outdoor,
+            target,
+            dt_minutes,
+            q_solar=q_solar,
+            q_residual=q_residual,
+            q_occupancy=q_occupancy,
+        )
+        return pf if mode == action and pf > 0.0 else 1.0
 
     def _action_to_Q(self, action: str) -> float:
         if action == MODE_HEATING:

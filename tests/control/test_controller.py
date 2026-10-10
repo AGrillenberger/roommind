@@ -175,7 +175,7 @@ async def test_mpc_requires_min_updates():
     assert mode2 == "idle"  # still bang-bang
     assert pf2 == 0.0
 
-    # Enough data → MPC (would heat at 20.9 because optimizer predicts drop)
+    # Enough data → MPC (starts outside the hysteresis with proportional power)
     model_mgr.get_mode_counts = MagicMock(return_value=(100, 30, 0))
     ctrl3 = MPCController(
         hass,
@@ -185,8 +185,10 @@ async def test_mpc_requires_min_updates():
         settings={},
         has_external_sensor=True,
     )
-    mode3, pf3 = await ctrl3.async_evaluate(current_temp=20.9, target_temp=21.0)
-    assert mode3 == "heating"  # MPC: optimizer decides to heat proactively
+    ctrl3._evaluate_mpc = MagicMock(wraps=ctrl3._evaluate_mpc)
+    mode3, pf3 = await ctrl3.async_evaluate(current_temp=20.8, target_temp=21.0)
+    ctrl3._evaluate_mpc.assert_called_once()
+    assert mode3 == "heating"
     assert 0.0 < pf3 <= 1.0
 
 
