@@ -32,6 +32,12 @@ MODE_IDLE = "idle"
 MODE_HEATING = "heating"
 MODE_COOLING = "cooling"
 
+# Global control strategy (settings["control_mode"]). Missing value = MPC, which
+# is what every install ran before the setting was read by the controller.
+CONTROL_MODE_MPC = "mpc"
+CONTROL_MODE_BANGBANG = "bangbang"
+DEFAULT_CONTROL_MODE = CONTROL_MODE_MPC
+
 # Schedule states
 SCHEDULE_STATE_ON = "on"
 

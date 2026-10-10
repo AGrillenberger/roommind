@@ -13,6 +13,7 @@ export class RsAnalyticsModel extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ attribute: false }) public data: AnalyticsData | null = null;
   @property({ type: String }) public language = "en";
+  @property({ type: String }) public controlMode: "mpc" | "bangbang" = "mpc";
 
   @state() private _expandedStat: string | null = null;
 
@@ -98,14 +99,21 @@ export class RsAnalyticsModel extends LitElement {
             <div class="confidence-bar">
               <div class="confidence-fill" style="width: ${hasModel ? confidencePct : 0}%"></div>
             </div>
-            <div class="control-mode-badge ${mpcActive ? "mpc" : "bangbang"}">
-              <ha-icon icon=${mpcActive ? "mdi:brain" : "mdi:school-outline"}></ha-icon>
-              ${
-                mpcActive
-                  ? localize("analytics.control_mode_mpc", l)
-                  : localize("analytics.control_mode_bangbang", l)
-              }
-            </div>
+            ${
+              this.controlMode === "bangbang"
+                ? html`<div class="control-mode-badge bangbang">
+                    <ha-icon icon="mdi:power"></ha-icon>
+                    ${localize("settings.control_mode_simple", l)}
+                  </div>`
+                : html`<div class="control-mode-badge ${mpcActive ? "mpc" : "bangbang"}">
+                    <ha-icon icon=${mpcActive ? "mdi:brain" : "mdi:school-outline"}></ha-icon>
+                    ${
+                      mpcActive
+                        ? localize("analytics.control_mode_mpc", l)
+                        : localize("analytics.control_mode_bangbang", l)
+                    }
+                  </div>`
+            }
             ${
               this._expandedStat === "confidence"
                 ? html`<div class="info-panel stat-info-panel">

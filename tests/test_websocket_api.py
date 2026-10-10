@@ -78,7 +78,7 @@ async def test_list_rooms_empty(ws_hass, store, connection):
             "hidden_rooms": [],
             "room_order": [],
             "group_by_floor": False,
-            "control_mode": "bangbang",
+            "control_mode": "mpc",
             "climate_control_active": True,
             "presence_enabled": False,
             "presence_persons": [],
@@ -1680,6 +1680,23 @@ async def test_analytics_with_estimator(ws_hass, store, connection):
     assert model["n_heating"] == 60
     assert model["n_cooling"] == 20
     assert "mpc_active" in model
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("control_mode", "expected"), [("bangbang", False), ("mpc", True), (None, True)])
+async def test_analytics_mpc_active_follows_control_mode(ws_hass, store, connection, control_mode, expected):
+    """A trained model only counts as MPC-active when control_mode allows MPC (missing = mpc)."""
+    await store.async_load()
+    if control_mode is not None:
+        await store.async_save_settings({"control_mode": control_mode})
+    await store.async_save_room("room_a", {"thermostats": ["climate.trv1"], "temperature_sensor": "sensor.temp"})
+
+    coordinator = _make_analytics_coordinator(history_rows=[], estimator=_make_mock_estimator(n_cooling=0))
+    ws_hass.data[DOMAIN]["coordinator"] = coordinator
+
+    await _get_analytics(ws_hass, connection, {"id": 56, "type": "roommind/analytics/get", "area_id": "room_a"})
+
+    assert connection.send_result.call_args[0][1]["model"]["mpc_active"] is expected
 
 
 @pytest.mark.asyncio

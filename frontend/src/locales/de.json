@@ -343,7 +343,7 @@
   "settings.control_mode": "Steuerungsmodus",
   "settings.control_mode_simple": "Einfach (Ein/Aus)",
   "settings.control_mode_mpc": "Intelligent (MPC)",
-  "settings.control_mode_hint": "MPC lernt das thermische Verhalten deiner Räume für optimale Steuerung",
+  "settings.control_mode_hint": "Intelligent: MPC lernt das thermische Verhalten jedes Raums und plant voraus (Ein/Aus-Regelung, solange es noch lernt). Einfach: nur Ein/Aus-Regelung mit Hysterese; das Modell lernt im Hintergrund weiter, entscheidet aber nicht.",
   "settings.comfort_weight": "Priorität",
   "settings.comfort_weight_comfort": "Komfort",
   "settings.comfort_weight_efficiency": "Effizienz",

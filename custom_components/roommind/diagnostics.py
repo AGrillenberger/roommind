@@ -10,7 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, VERSION
+from .const import DEFAULT_CONTROL_MODE, DOMAIN, VERSION
 from .control.mpc_controller import _active_targets, _last_commands, _now, _sent_at
 from .utils.history_store import DETAIL_FIELDS
 
@@ -410,7 +410,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, config_entry: 
             "latitude": round(hass.config.latitude),
             "longitude": round(hass.config.longitude),
         },
-        "settings": dict(settings),
+        "settings": {"control_mode": DEFAULT_CONTROL_MODE, **settings},
         "rooms": rooms_diag,
         "outdoor": outdoor,
         "recent_history": recent_history,

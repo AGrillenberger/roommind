@@ -24,7 +24,9 @@ from ..const import (
     CLIMATE_MODE_HEAT_ONLY,
     COMMAND_CACHE_REASSERT_SECONDS,
     COMPRESSOR_HOLD_RETARGET_TOLERANCE,
+    CONTROL_MODE_BANGBANG,
     DEFAULT_COMFORT_WEIGHT,
+    DEFAULT_CONTROL_MODE,
     DEFAULT_OUTDOOR_COOLING_MIN,
     DEFAULT_OUTDOOR_HEATING_MAX,
     HEATING_BOOST_TARGET,
@@ -829,6 +831,11 @@ def fill_missing_targets(heat: float | None, cool: float | None, fallback: float
     return heat, cool
 
 
+def is_mpc_enabled(settings: dict | None) -> bool:
+    """Return False when the user picked simple on/off control (``control_mode``)."""
+    return bool((settings or {}).get("control_mode", DEFAULT_CONTROL_MODE) != CONTROL_MODE_BANGBANG)
+
+
 def is_mpc_active(
     model_manager: RoomModelManager,
     area_id: str,
@@ -836,12 +843,16 @@ def is_mpc_active(
     can_cool: bool,
     current_temp: float,
     outdoor_temp: float,
+    *,
+    settings: dict | None = None,
 ) -> bool:
     """Check if MPC control is active for a room.
 
     Single source of truth for MPC activation — used by coordinator
     and analytics.
     """
+    if not is_mpc_enabled(settings):
+        return False
     model = model_manager.get_model(area_id)
     Q_check = model.Q_heat if can_heat else (-model.Q_cool if can_cool else 0.0)
     pred_std = model_manager.get_prediction_std(area_id, Q_check, current_temp, outdoor_temp, PLAN_DT_MINUTES)
@@ -916,6 +927,7 @@ class MPCController:
         self._force_off = False
 
         s = settings or {}
+        self._mpc_enabled = is_mpc_enabled(s)
         self.outdoor_cooling_min = s.get("outdoor_cooling_min", DEFAULT_OUTDOOR_COOLING_MIN)
         self.outdoor_heating_max = s.get("outdoor_heating_max", DEFAULT_OUTDOOR_HEATING_MAX)
 
@@ -955,6 +967,10 @@ class MPCController:
         if not self.has_external_sensor:
             mode = self._evaluate_managed_mode(targets)
             return mode, 1.0  # managed mode: device self-regulates
+
+        if not self._mpc_enabled:
+            mode = self._evaluate_bangbang(current_temp, targets)
+            return mode, 1.0 if mode != MODE_IDLE else 0.0
 
         # Use the model's prediction uncertainty to decide MPC vs bang-bang.
         # Compute std for the actual operating conditions (heating power as proxy).

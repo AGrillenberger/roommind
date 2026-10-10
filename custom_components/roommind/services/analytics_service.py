@@ -232,7 +232,7 @@ async def build_analytics_data(
                     if coordinator.outdoor_temp_effective is not None
                     else DEFAULT_OUTDOOR_TEMP_FALLBACK
                 )
-                mpc_active = is_mpc_active(mgr, area_id, can_heat, can_cool, 20.0, T_out)
+                mpc_active = is_mpc_active(mgr, area_id, can_heat, can_cool, 20.0, T_out, settings=settings)
             else:
                 mpc_active = False
             # EKF uncertainty: sqrt(P[0][0]) as proxy for sigma_e

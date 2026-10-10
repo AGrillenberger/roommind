@@ -1076,6 +1076,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     _cc,
                     current_temp or 20.0,
                     _T_out,
+                    settings=settings,
                 )
             except Exception:  # noqa: BLE001
                 mpc_active = False

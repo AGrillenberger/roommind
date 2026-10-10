@@ -666,6 +666,29 @@ class TestCoverageGaps:
         assert room_state["mpc_active"] is True
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(("control_mode", "expected"), [("bangbang", False), ("mpc", True), (None, True)])
+    async def test_mpc_active_follows_control_mode(self, hass, mock_config_entry, control_mode, expected):
+        """A trained room only reports mpc_active when control_mode allows MPC (missing = mpc)."""
+        room = {**SAMPLE_ROOM, "area_id": "mpc_room"}
+        store = _make_store_mock({"mpc_room": room})
+        settings = {"outdoor_temp_sensor": "sensor.outdoor_temp"}
+        if control_mode is not None:
+            settings["control_mode"] = control_mode
+        store.get_settings.return_value = settings
+        hass.data = {"roommind": {"store": store}}
+        hass.states.get = MagicMock(side_effect=make_mock_states_get(temp="18.0", outdoor_temp="5.0"))
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        mgr = coordinator._model_manager
+        mgr.get_prediction_std = MagicMock(return_value=0.1)
+        mgr.get_mode_counts = MagicMock(return_value=(100, 30, 30))
+
+        data = await coordinator._async_update_data()
+
+        assert data["rooms"]["mpc_room"]["mpc_active"] is expected
+
+    @pytest.mark.asyncio
     async def test_history_write_computes_prediction(self, hass, mock_config_entry):
         """History write cycle computes predictions for next cycle."""
         from custom_components.roommind.const import HISTORY_WRITE_CYCLES

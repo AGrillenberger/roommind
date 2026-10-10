@@ -176,6 +176,8 @@ async def test_diagnostics_with_coordinator_and_model(hass, mock_config_entry):
     assert result["outdoor"]["forecast_available"] is False
     assert result["presence"]["enabled"] is True
     assert result["presence"]["person_states"]["person.alice"] == "home"
+    # control_mode was never saved: the export shows the effective default
+    assert result["settings"]["control_mode"] == "mpc"
 
 
 @pytest.mark.asyncio
