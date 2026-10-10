@@ -264,3 +264,18 @@ async def test_gentle_regime_combines_deadband_and_dwell():
         clock["t"] += PROPORTIONAL_SETPOINT_DWELL_SECONDS
         await _heat(hass, ctrl, 0.5)
     assert len(_setpoints(hass)) == 2
+
+
+@pytest.mark.asyncio
+async def test_backing_off_from_the_boost_waits_for_the_dwell():
+    """Kept on purpose: skipping the dwell for the back-off cost commands in the sim without
+    reducing overshoot (ir-ac-no-feedback 7.25 -> 8.83/h, homematic duty cycle over 20/h)."""
+    hass = build_hass()
+    _device(hass, state="off")
+    ctrl = _ctrl(hass)
+    clock = {"t": 1000.0}
+    with patch(_NOW, side_effect=lambda: clock["t"]):
+        await _heat(hass, ctrl, 1.0, current_temp=19.0)
+        clock["t"] += 30
+        await _heat(hass, ctrl, 0.15, current_temp=19.6)
+    assert len(_setpoints(hass)) == 1

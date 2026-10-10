@@ -8,6 +8,7 @@ hysteresis) restarted the device on every other 30 s cycle (~45 commands/h).
 from __future__ import annotations
 
 import time
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -241,3 +242,33 @@ def test_radiator_counts_as_fast(monkeypatch):
     _fake_plan(monkeypatch, MODE_HEATING)
     ctrl = _controller({**HEAT_ROOM, "heating_system_type": "radiator"}, heating_system_type="radiator")
     assert ctrl._evaluate_mpc(20.9, TargetTemps(heat=21.0, cool=24.0)) == (MODE_IDLE, 0.0)
+
+
+def _ac_state(modes):
+    state = MagicMock()
+    state.state = "off"
+    state.attributes = {"hvac_modes": modes}
+    return state
+
+
+@pytest.mark.parametrize(
+    ("ac_modes", "expected"),
+    [(["off", "heat", "cool"], MODE_IDLE), (["off", "cool"], MODE_HEATING)],
+)
+def test_trv_room_with_a_heating_ac_uses_the_bang_bang_hysteresis(monkeypatch, ac_modes, expected):
+    """TRV + heat pump: the AC heats along (orchestrated or not), so its air-node hysteresis applies."""
+    _fake_plan(monkeypatch, MODE_HEATING)
+    ctrl = _controller({"climate_mode": "heat_only", "acs": ["climate.ac1"]})
+    ctrl.hass.states.get = MagicMock(return_value=_ac_state(ac_modes))
+    mode, _ = ctrl._evaluate_mpc(20.8, TargetTemps(heat=21.0, cool=24.0))
+    assert mode == expected
+
+
+def test_cooling_min_run_is_the_ac_one_in_a_ufh_room():
+    """A hybrid UFH + AC room must not keep the AC cooling for the 30-min UFH run time."""
+    room = {"climate_mode": "auto", "acs": ["climate.ac1"], "heating_system_type": "underfloor"}
+    after_ac_min_run = {"previous_mode": MODE_COOLING, "mode_on_since": time.time() - 15 * 60}
+    ctrl = _controller(room, outdoor_temp=30.0, heating_system_type="underfloor", **after_ac_min_run)
+    assert ctrl._within_min_run(MODE_COOLING) is False
+    ctrl.previous_mode = MODE_HEATING
+    assert ctrl._within_min_run(MODE_HEATING) is True
