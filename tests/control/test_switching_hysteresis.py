@@ -76,6 +76,17 @@ def test_heating_starts_only_past_the_hysteresis(monkeypatch, temp, expected):
     assert mode == expected
 
 
+@pytest.mark.parametrize(
+    ("temp", "expected"), [(20.8, MODE_IDLE), (20.800000000000004, MODE_IDLE), (20.7, MODE_HEATING)]
+)
+def test_ac_heated_room_uses_the_bang_bang_hysteresis(monkeypatch, temp, expected):
+    _fake_plan(monkeypatch, MODE_HEATING)
+    ctrl = _controller({"climate_mode": "heat_only", "acs": ["climate.ac1"], "thermostats": []})
+    ctrl._get_can_heat_cool = lambda: (True, False)
+    mode, _ = ctrl._evaluate_mpc(temp, TargetTemps(heat=21.0, cool=24.0))
+    assert mode == expected
+
+
 def test_running_heat_is_not_stopped_by_the_start_hysteresis(monkeypatch):
     _fake_plan(monkeypatch, MODE_HEATING, pf=0.6)
     ctrl = _controller(previous_mode=MODE_HEATING, mode_on_since=time.time() - 3600)
@@ -96,14 +107,15 @@ def test_preheat_for_a_rising_target_may_start_early(monkeypatch):
 @pytest.mark.parametrize(
     ("temp", "expected"),
     [
-        (24.0, MODE_IDLE),
         (24.1, MODE_IDLE),
-        (24.100000000000005, MODE_IDLE),
-        (24.2, MODE_COOLING),
-        (24.199999999999996, MODE_COOLING),
+        (24.2, MODE_IDLE),
+        (24.200000000000003, MODE_IDLE),
+        (24.3, MODE_COOLING),
+        (24.299999999999997, MODE_COOLING),
     ],
 )
 def test_cooling_starts_only_past_the_hysteresis(monkeypatch, temp, expected):
+    """Cooling always runs on an AC: its air node needs the wider bang-bang hysteresis."""
     _fake_plan(monkeypatch, MODE_COOLING)
     mode, _ = _controller(COOL_ROOM, outdoor_temp=30.0)._evaluate_mpc(temp, TargetTemps(heat=None, cool=24.0))
     assert mode == expected

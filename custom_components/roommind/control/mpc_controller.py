@@ -760,8 +760,10 @@ DEFAULT_OUTDOOR_TEMP_FALLBACK = 10.0
 SAFETY_GUARD_MIN_BLOCKS = 6  # Minimum guard horizon (30 min floor)
 GUARD_PREDICTION_MARGIN = 0.2  # °C margin for prediction-based guard bypass
 HARD_OVERSHOOT_CEILING = 1.0  # °C — model-independent max overshoot before forced idle
-# A fast system only starts once the room is this far past the target (one sensor
-# step): the optimizer alone switched at the target itself, every other cycle.
+# A fast system only starts once the room is this far past the target: the optimizer
+# alone switched at the target itself, every other cycle. One sensor step for TRVs; an
+# AC heats and cools the air node directly, which drops back 0.2-0.3 K right after a
+# stop, so AC-served runs use the bang-bang hysteresis.
 MPC_START_HYSTERESIS = 0.1
 _TEMP_EPSILON = 1e-6  # sensor floats like 20.899999999999 still read 20.9
 
@@ -1236,7 +1238,7 @@ class MPCController:
         an AC's air node relaxing right after a stop) switched the device every
         30 s cycle. Two rules:
 
-        * a run only starts past ``MPC_START_HYSTERESIS``, unless a stricter target
+        * a run only starts past the start hysteresis, unless a stricter target
           is coming up (pre-heating/pre-cooling stays the optimizer's call),
         * a run the optimizer wants to end stays on until its minimum run time is
           over, at gentle power.
@@ -1252,11 +1254,12 @@ class MPCController:
 
         if action == MODE_HEATING:
             if not slow_heat and self.previous_mode != MODE_HEATING and not heat_rising:
-                if current_temp > heat_now - MPC_START_HYSTERESIS - _TEMP_EPSILON:
+                hysteresis = MPC_START_HYSTERESIS if self.thermostats else BANGBANG_HEAT_HYSTERESIS
+                if current_temp > heat_now - hysteresis - _TEMP_EPSILON:
                     return MODE_IDLE, 0.0
         elif action == MODE_COOLING:
             if self.previous_mode != MODE_COOLING and not cool_falling:
-                if current_temp < cool_now + MPC_START_HYSTERESIS + _TEMP_EPSILON:
+                if current_temp < cool_now + BANGBANG_COOL_HYSTERESIS + _TEMP_EPSILON:
                     return MODE_IDLE, 0.0
         elif (
             not slow_heat
