@@ -1654,7 +1654,12 @@ def test_restart_state_never_retracts_unknown_position():
 
 
 @patch("custom_components.roommind.managers.cover_manager.time")
-def test_retract_within_deadband_ends_episode_without_command(mock_t):
+def test_retract_restores_owned_position_inside_deadband(mock_t):
+    """An owned intermediate position near the baseline is still restored.
+
+    The deadband spares the motor for small modulation steps, but ending the
+    episode at RoomMind's own 90 % would hand that position to the user.
+    """
     mgr = CoverManager()
     mock_t.time.return_value = 1000.0
     state = mgr._get_state("lr")
@@ -1664,9 +1669,106 @@ def test_retract_within_deadband_ends_episode_without_command(mock_t):
     state.baseline_position = 100
     kwargs = {**_BASE_KWARGS, "q_solar": 0.05}
     d = mgr.evaluate("lr", predicted_peak_temp=21.0, target_temp=21.0, **kwargs)
+    assert d.changed is True
+    assert d.target_position == 100
+    assert d.reason == "low_solar_retract"
+    assert state.baseline_position is None
+    assert state.owned is False
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_retract_without_baseline_restores_owned_position_inside_deadband(mock_t):
+    """Owned 85 % (e.g. after a forced position) opens fully once solar is low."""
+    mgr = CoverManager()
+    mock_t.time.return_value = 1000.0
+    state = mgr._get_state("lr")
+    state.current_position = 85
+    state.last_commanded_position = 85
+    state.owned = True
+    kwargs = {**_BASE_KWARGS, "q_solar": 0.05}
+    d = mgr.evaluate("lr", predicted_peak_temp=21.0, target_temp=21.0, **kwargs)
+    assert d.changed is True
+    assert d.target_position == 100
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_retract_restore_is_sent_once_when_cover_settles_short(mock_t):
+    """Commanded 100, cover reports 97: no resend every hold period."""
+    mgr = CoverManager()
+    mock_t.time.return_value = 1000.0
+    state = mgr._get_state("lr")
+    state.current_position = 80
+    state.last_commanded_position = 80
+    state.owned = True
+    kwargs = {**_BASE_KWARGS, "q_solar": 0.05}
+    d = mgr.evaluate("lr", predicted_peak_temp=21.0, target_temp=21.0, **kwargs)
+    assert d.changed is True and d.target_position == 100
+
+    for i in range(1, 5):
+        mock_t.time.return_value = 1000.0 + i * (COVER_MIN_HOLD_SECONDS + 1)
+        mgr.update_position("lr", 97)
+        d = mgr.evaluate("lr", predicted_peak_temp=21.0, target_temp=21.0, **kwargs)
+        assert d.changed is False
+        assert d.reason == "low_solar"
+    assert mgr.is_user_override_active("lr") is False
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_retract_inside_deadband_leaves_unowned_position_alone(mock_t):
+    """#325: a user position near the retract target still gets no command."""
+    mgr = CoverManager()
+    mock_t.time.return_value = 1000.0
+    mgr.update_position("lr", 90)
+    kwargs = {**_BASE_KWARGS, "q_solar": 0.05}
+    d = mgr.evaluate("lr", predicted_peak_temp=21.0, target_temp=21.0, **kwargs)
     assert d.changed is False
     assert d.reason == "low_solar"
-    assert state.baseline_position is None
+    assert d.target_position == 90
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_evening_modulation_never_strands_cover_as_user_position(mock_t):
+    """Sim covers-solar-south: two shading days, no user interaction.
+
+    Day 1 modulation ends at 92 (8 below the baseline 100), day 2 at 74
+    (18 below). Both are RoomMind's own positions and must be retracted;
+    before the fix the cover stayed at 74 overnight with user_position_hold.
+    """
+    mgr = CoverManager()
+    t = [1000.0]
+
+    def step(peak: float, **extra) -> object:
+        t[0] += COVER_MIN_HOLD_SECONDS + 1
+        mock_t.time.return_value = t[0]
+        d = mgr.evaluate("lr", predicted_peak_temp=peak, target_temp=21.0, **{**_BASE_KWARGS, **extra})
+        if d.changed:
+            mgr.update_position("lr", d.target_position)
+        return d
+
+    mock_t.time.return_value = t[0]
+    mgr.update_position("lr", 100)
+
+    # day 1 evening: 75 → 33 → 92, then the retract
+    assert step(23.0).target_position == 75
+    assert step(23.85).target_position == 33
+    assert step(22.67).target_position == 92
+    d = step(20.0)
+    assert d.changed is True and d.target_position == 100
+    d = step(20.0, q_solar=0.05)
+    assert d.changed is False and d.target_position == 100
+
+    # day 2: full shade, evening 23 → 74, then the retract
+    assert step(25.0).target_position == 0
+    assert mgr._get_state("lr").baseline_position == 100
+    assert step(24.05).target_position == 23
+    assert step(23.03).target_position == 74
+    d = step(20.0)
+    assert d.changed is True and d.target_position == 100
+    d = step(20.0, q_solar=0.05)
+    assert d.changed is False
+    assert d.reason != "user_position_hold"
+    assert mgr.get_current_position("lr") == 100
+    assert mgr.is_user_override_active("lr") is False
 
 
 @patch("custom_components.roommind.managers.cover_manager.time")

@@ -3,6 +3,8 @@ description: >
   Summer, south-facing living room with an exterior venetian blind under automatic
   control and a cooling AC. The blind shades on hot sunny afternoons and opens again
   in the evening; someone working in the room must not trigger shading on its own (#418, #325).
+  RoomMind's own moves never count as manual; real manual moves on day 3 pause the
+  automatic control and the manual night position is kept.
 refs: [418, 325]
 tags: [covers, solar, ac]
 start: 2026-07-06T00:00
@@ -39,7 +41,23 @@ roommind:
       eco_temp: 27.0
       covers: [cover.wohnzimmer_raffstore]
       covers_auto_enabled: true
+timeline:
+  # day 3: someone opens the shaded blind for the balcony door, later closes it for the night
+  - {at: "+2d14h", do: cover.manual, entity_id: cover.wohnzimmer_raffstore, position: 100}
+  - {at: "+2d21h", do: cover.manual, entity_id: cover.wohnzimmer_raffstore, position: 10}
 expect:
-  - {check: "cover('cover.wohnzimmer_raffstore').position < 90", at: "+1d15h", label: shades in the afternoon}
-  - {check: "cover('cover.wohnzimmer_raffstore').position > 90", at: "+1d23h", label: open at night, known_failure: 'candidate (timing dependent): RoomMind sends 74 % in the evening, then reports cover_reason user_position_hold although nobody moved the blind; it stays there overnight'}
   - {invariant: no_rejected_commands}
+  - {check: "cover('cover.wohnzimmer_raffstore').position < 90", at: "+1d15h", label: shades in the afternoon}
+  # RoomMind's own moves, read mid-travel included, are never taken for a user move
+  - {check: "room.wohnzimmer.cover_auto_paused == false", at: "+0d18h35m", label: own deploy step is not a manual move (day 1)}
+  - {check: "room.wohnzimmer.cover_auto_paused == false", at: "+1d06h55m", label: own morning deploy is not a manual move}
+  - {check: "room.wohnzimmer.cover_auto_paused == false", at: "+1d18h37m", label: own deploy step is not a manual move (day 2)}
+  # Evening modulation ending near the baseline must still retract (was stranded at 74 % / 92 %)
+  - {check: "cover('cover.wohnzimmer_raffstore').position > 98", at: "+0d23h", label: open at night (day 1)}
+  - {check: "cover('cover.wohnzimmer_raffstore').position > 98 and room.wohnzimmer.cover_reason != 'user_position_hold'", at: "+1d23h", label: open at night (day 2)}
+  - {check: "cover('cover.wohnzimmer_raffstore').position > 98", at: "+2d20h30m", label: open in the evening (day 3)}
+  # Genuine manual moves are respected
+  - {check: "room.wohnzimmer.cover_auto_paused == true", at: "+2d14h05m", label: manual opening pauses automatic control}
+  - {check: "cover('cover.wohnzimmer_raffstore').position > 90", at: "+2d14h50m", label: manual opening is kept during the pause}
+  - {check: "room.wohnzimmer.cover_auto_paused == true", at: "+2d21h05m", label: manual closing pauses automatic control}
+  - {check: "cover('cover.wohnzimmer_raffstore').position < 20 and room.wohnzimmer.cover_auto_paused == false", at: "+2d23h30m", label: manual night position is kept after the pause}
