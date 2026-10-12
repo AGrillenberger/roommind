@@ -18,6 +18,7 @@ from custom_components.roommind.const import MODE_COOLING, MODE_HEATING, MODE_ID
 from custom_components.roommind.control import mpc_controller as mc
 from custom_components.roommind.control.analytics_simulator import _simulate_mpc
 from custom_components.roommind.control.mpc_controller import MPCController
+from custom_components.roommind.control.residual_heat import compute_residual_heat
 from custom_components.roommind.control.thermal_model import RCModel, RoomModelManager
 
 from .conftest import build_hass, make_room
@@ -55,6 +56,12 @@ def _closed_loop(
     on_since = START - elapsed_minutes * 60 if previous_mode != MODE_IDLE and elapsed_minutes is not None else None
     T = T0
     temps: list[float] = []
+    # Residual heat bookkeeping as the prediction does it (the coordinator's tracker
+    # differs in detail: last real power fraction instead of 1.0)
+    q_residual = 0.0
+    heating_blocks = 0
+    since_stop = 0.0
+    was_heating = False
     for _ in range(STEPS):
         ctrl = MPCController(
             hass,
@@ -66,12 +73,22 @@ def _closed_loop(
             mode_on_since=on_since,
             has_external_sensor=True,
             heating_system_type=heating_system_type,
+            q_residual=q_residual,
         )
         monkeypatch.setattr(ctrl, "_build_solar_series", lambda n: [0.0] * n)
         mode, pf = ctrl._evaluate_mpc(T, targets)
         Q = pf * model.Q_heat if mode == MODE_HEATING else -(pf * model.Q_cool) if mode == MODE_COOLING else 0.0
-        T = max(5.0, min(40.0, model.predict(T, outdoor, Q, 5.0)))
+        T = max(5.0, min(40.0, model.predict(T, outdoor, Q, 5.0, q_residual=q_residual if Q == 0.0 else 0.0)))
         temps.append(round(T, 2))
+        if mode == MODE_HEATING:
+            heating_blocks += 1
+            was_heating = True
+            since_stop = 0.0
+            q_residual = 0.0
+        else:
+            since_stop += 5.0
+            if heating_system_type and was_heating:
+                q_residual = compute_residual_heat(since_stop, heating_system_type, 1.0, heating_blocks * 5.0)
         if mode != MODE_IDLE and prev != mode:
             on_since = clock["now"]
         elif mode == MODE_IDLE:
@@ -113,6 +130,7 @@ def _prediction(
 TRV = RCModel(C=1.0, U=0.3, Q_heat=10.0, Q_cool=0.0)
 AC = RCModel(C=1.0, U=0.3, Q_heat=20.0, Q_cool=20.0)
 UFH = RCModel(C=1.0, U=0.2, Q_heat=6.0, Q_cool=0.0)
+SLOW_UFH = RCModel(C=1.0, U=0.02, Q_heat=2.0, Q_cool=0.0)
 
 
 @pytest.mark.parametrize(
@@ -140,6 +158,12 @@ UFH = RCModel(C=1.0, U=0.2, Q_heat=6.0, Q_cool=0.0)
             {"T0": 21.0, "outdoor": -5.0},
         ),
         ("ufh below target", UFH, {"climate_mode": "heat_only", "heating_system_type": "underfloor"}, {"T0": 20.0}),
+        (
+            "ufh start penalty at the target",
+            SLOW_UFH,
+            {"climate_mode": "heat_only", "heating_system_type": "underfloor"},
+            {"T0": 21.1, "outdoor": 10.0},
+        ),
         (
             "ac heating",
             AC,

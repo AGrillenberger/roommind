@@ -30,7 +30,7 @@ from .mpc_controller import (
     heat_start_hysteresis,
     is_slow_heat,
 )
-from .mpc_optimizer import MPCOptimizer
+from .mpc_optimizer import MPCOptimizer, slow_start_penalty
 from .residual_heat import (
     advance_rebound,
     build_residual_series,
@@ -314,6 +314,7 @@ def _simulate_mpc(
     min_run = get_min_run_blocks(heating_system_type, PLAN_DT_MINUTES)
     cool_min_run = get_min_run_blocks("", PLAN_DT_MINUTES)
     slow_heat = is_slow_heat(min_run)
+    start_penalty = slow_start_penalty(min_run, PLAN_DT_MINUTES)
     heat_hysteresis = heat_start_hysteresis(acs_can_heat, bool(get_trv_eids(room_config.get("devices", []))))
     block_seconds = PLAN_DT_MINUTES * 60
 
@@ -385,6 +386,7 @@ def _simulate_mpc(
                 override_active=override_active,
                 heating_system_type=heating_system_type,
                 approach_rate=approach_rate,
+                start_penalty=start_penalty,
             )
             plan = optimizer.optimize(
                 T_room=T,
@@ -396,6 +398,7 @@ def _simulate_mpc(
                 residual_series=remaining_residual,
                 occupancy_series=[q_occupancy] * len(remaining_outdoor),
                 rebound_charge=charge,
+                initial_mode=prev_action,
             )
             in_run = run_seconds is not None
             action, pf = decide_mpc_action(
