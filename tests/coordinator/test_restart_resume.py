@@ -128,3 +128,30 @@ async def test_seed_waits_for_a_device_that_is_unavailable_after_the_restart(has
     assert data["rooms"][AREA]["mode"] == MODE_HEATING
     assert not _turned_off(hass)
     assert AREA in coordinator._mode_seeded
+
+
+@pytest.mark.asyncio
+async def test_disabled_room_does_not_seed_every_cycle(hass, mock_config_entry, monkeypatch):
+    """Learn-only rooms (climate control off) never seed a run from the devices."""
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "custom_components.roommind.coordinator.infer_running_mode",
+        lambda *a, **k: calls.append("seed") or MODE_HEATING,
+    )
+    store = _make_store_mock({AREA: {**SAMPLE_ROOM, "climate_mode": "heat_only", "climate_control_enabled": False}})
+    hass.data = {"roommind": {"store": store}}
+    base = make_mock_states_get(temp="20.9")
+    hass.states.get = MagicMock(side_effect=lambda eid: _state("heat", "heating") if eid == TRV else base(eid))
+    hass.services.async_call = AsyncMock()
+    coordinator = _create_coordinator(hass, mock_config_entry)
+    await coordinator._async_update_data()
+    await coordinator._async_update_data()
+    assert calls == []
+
+
+def test_rebound_tracker_seeded_run_starts_charged():
+    from custom_components.roommind.managers.residual_heat_tracker import AcReboundTracker
+
+    tracker = AcReboundTracker()
+    tracker.seed_running("r")
+    assert tracker.get_charge("r") == pytest.approx(1.0, abs=1e-3)

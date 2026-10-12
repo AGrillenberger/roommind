@@ -88,6 +88,12 @@ class AcReboundTracker:
         self._cooling[area_id] = cooling
         self._at[area_id] = time.time()
 
+    def seed_running(self, area_id: str) -> None:
+        """Start fully charged: a cooling run already in progress (after a restart)."""
+        self._charge[area_id] = 1.0
+        self._cooling[area_id] = True
+        self._at[area_id] = time.time()
+
     def remove_room(self, area_id: str) -> None:
         """Clean up state for a removed room."""
         self._charge.pop(area_id, None)

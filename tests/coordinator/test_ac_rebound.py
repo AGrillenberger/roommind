@@ -69,7 +69,8 @@ async def test_cooling_charges_the_tracker_and_reaches_training_and_controller(h
     await coordinator._async_update_data()
     area = room["area_id"]
     assert training.call_args.kwargs["ekf_mode"] == MODE_COOLING
-    assert training.call_args.kwargs["q_rebound"] == 0.0
+    # the unit was already cooling at startup: the adopted run starts fully charged
+    assert training.call_args.kwargs["q_rebound"] == pytest.approx(1.0)
     assert coordinator._rebound_tracker._cooling[area] is True
 
     coordinator._rebound_tracker._at[area] -= 600
@@ -99,3 +100,40 @@ async def test_ghost_cooling_does_not_charge(hass, mock_config_entry):
 
     await coordinator._async_update_data()
     assert room["area_id"] not in coordinator._rebound_tracker._at
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("hold", "trained"), [(True, False), (False, True)])
+async def test_compressor_hold_with_running_unit_skips_training_and_keeps_charging(
+    hass, mock_config_entry, hold, trained
+):
+    """Min-run hold (#436): room IDLE, unit still cooling. No idle label, charge follows the unit."""
+    room = _ac_room()
+    store = _make_store_mock({room["area_id"]: room})
+    hass.data = {"roommind": {"store": store}}
+    hass.states.get = MagicMock(side_effect=_states("cooling"))
+    coordinator = _create_coordinator(hass, mock_config_entry)
+    training = MagicMock()
+    coordinator._ekf_training.process = training
+    coordinator._ekf_training.clear = MagicMock()
+    coordinator.outdoor_temp_effective = 30.0
+
+    await coordinator._observe_and_train(
+        area_id=room["area_id"],
+        room=room,
+        settings={},
+        current_temp_raw=24.0,
+        mode="idle",
+        power_fraction=0.0,
+        window_open=False,
+        raw_open=False,
+        q_residual=0.0,
+        shading_factor=None,
+        q_occupancy=0.0,
+        has_external_sensor=True,
+        heat_source_plan=None,
+        climate_active=True,
+        compressor_hold=hold,
+    )
+    assert training.called is trained
+    assert (coordinator._rebound_tracker._cooling.get(room["area_id"]) is True) is hold

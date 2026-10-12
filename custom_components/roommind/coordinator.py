@@ -731,6 +731,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         seed_pending = False
         if (
             has_external_sensor
+            and settings.get("climate_control_active", True)
+            and room.get("climate_control_enabled", True)
             and area_id not in self._mode_seeded
             and self._previous_modes.get(area_id, MODE_IDLE) == MODE_IDLE
         ):
@@ -741,6 +743,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             if seeded not in (None, MODE_IDLE):
                 self._previous_modes[area_id] = seeded
                 self._mode_on_since[area_id] = time.time()
+                if seeded == MODE_COOLING:
+                    # The unit has been cooling for a while: the air already sits below the mass
+                    self._rebound_tracker.seed_running(area_id)
 
         # --- Compute residual heat from previous cycle state ---
         system_type = room.get("heating_system_type", "")
@@ -1143,6 +1148,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             heat_source_plan=heat_source_plan,
             climate_active=climate_active,
             coil_dry_skip_training=coil_dry.skip_ekf_training,
+            compressor_hold=bool(compressor_forced_on),
         )
 
         return self._build_room_state_dict(
@@ -1200,6 +1206,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         q_rebound: float | None = None,
         climate_active: bool,
         coil_dry_skip_training: bool = False,
+        compressor_hold: bool = False,
     ) -> tuple[str, float]:
         """Observe device state, train EKF, compute display mode.
 
@@ -1296,6 +1303,15 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             ekf_mode = MODE_IDLE
             q_residual_training = 0.0
 
+        # Compressor min-run hold (#436): the room is IDLE but a held unit keeps running.
+        # Training that as idle drifts alpha and empties the rebound charge mid-run, so
+        # the step is skipped and the charge follows the unit actually running.
+        hold_running: str | None = None
+        if climate_active and has_external_sensor and compressor_hold and ekf_mode == MODE_IDLE:
+            obs_mode, _ = self._observe_device_action(room)
+            if obs_mode in (MODE_HEATING, MODE_COOLING):
+                hold_running = obs_mode
+
         # Update thermal model with observation (EKF online learning).
         # The filter must NOT train with a degenerate outdoor fallback (e.g.
         # using room temp when the sensor is unavailable): F[0][1] collapses
@@ -1309,6 +1325,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         if (
             learning_active
             and not coil_dry_skip_training
+            and hold_running is None
             and current_temp_raw is not None
             and self.outdoor_temp_effective is not None
         ):
@@ -1333,7 +1350,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         else:
             self._ekf_training.clear(area_id)
         # Same mode the EKF learns from, so the charge matches its labels.
-        self._rebound_tracker.update(area_id, ekf_mode)
+        self._rebound_tracker.update(area_id, hold_running or ekf_mode)
 
         # Update mode-start tracking for min-run enforcement in the next cycle
         _prev_mode = self._previous_modes.get(area_id, MODE_IDLE)
