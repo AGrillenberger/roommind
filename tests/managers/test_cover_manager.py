@@ -1891,3 +1891,41 @@ def test_partial_open_after_forced_position_skips_reopen_rule(mock_t):
     d = mgr.evaluate("lr", predicted_peak_temp=23.3, target_temp=21.0, **_BASE_KWARGS)
     assert d.changed is True
     assert d.target_position == 60
+
+
+# ── Shading by need (rooms that cool) ──────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("peak", "expected"),
+    [
+        # threshold 1.5, effectiveness 0.85: closed = (1 - 1.5 / excess) / 0.85
+        (23.5, 53),  # excess 2.5
+        (24.0, 42),  # excess 3.0 (the linear mapping closed 75 %)
+        (30.0, 2),  # excess 9.0
+    ],
+)
+def test_shade_by_need_closes_as_far_as_needed(peak, expected):
+    mgr = CoverManager()
+    d = mgr.evaluate("lr", predicted_peak_temp=peak, target_temp=21.0, shade_by_need=True, **_BASE_KWARGS)
+    assert d.changed is True
+    assert d.target_position == expected
+
+
+def test_shade_by_need_small_excess_stays_in_deadband():
+    mgr = CoverManager()
+    d = mgr.evaluate("lr", predicted_peak_temp=22.6, target_temp=21.0, shade_by_need=True, **_BASE_KWARGS)
+    assert d.changed is False
+    assert d.reason == "deadband"
+
+
+def test_shade_by_need_respects_min_position_and_snap():
+    mgr = CoverManager()
+    kwargs = {**_BASE_KWARGS, "covers_min_position": 50}
+    d = mgr.evaluate("lr", predicted_peak_temp=30.0, target_temp=21.0, shade_by_need=True, **kwargs)
+    assert d.target_position == 50
+    mgr = CoverManager()
+    d = mgr.evaluate(
+        "lr", predicted_peak_temp=23.5, target_temp=21.0, shade_by_need=True, covers_snap_deploy=True, **_BASE_KWARGS
+    )
+    assert d.target_position == 0

@@ -10,8 +10,10 @@ import pytest
 from custom_components.roommind.const import (
     COVER_COOLING_LOOKAHEAD_H,
     COVER_DEFAULT_BETA_S,
+    COVER_DIRECT_SUN_ANGLE_DEG,
     COVER_LINEAR_LOOKAHEAD_H,
     COVER_MIN_IDLE_FOR_LEARNED,
+    COVER_PREDICTION_DT_MINUTES,
     COVER_SMOOTHING_MINUTES,
     COVER_SMOOTHING_RISE_MINUTES,
     MODE_COOLING,
@@ -1898,6 +1900,14 @@ class TestShadeBeforeCooling:
         assert CoverOrchestrator._smooth(store, "lr", 5.0, 50.0) == 1.0
 
 
+_AZIMUTH = "custom_components.roommind.managers.cover_orchestrator.solar_azimuth"
+_N_COOL = int(COVER_COOLING_LOOKAHEAD_H * 60 / COVER_PREDICTION_DT_MINUTES)
+
+
+def _input_h(series: list[float]) -> float:
+    return sum(series) * COVER_PREDICTION_DT_MINUTES / 60.0
+
+
 class TestEstimateSolarLoadPeak:
     def _orch(self, n_idle: int = 0, confident: bool = False) -> CoverOrchestrator:
         mm = _make_model_manager()
@@ -1905,20 +1915,29 @@ class TestEstimateSolarLoadPeak:
         mm.get_prediction_std.return_value = 0.1 if confident else 1.0
         return CoverOrchestrator(_make_hass(), _make_cover_manager(), mm)
 
-    @patch(_BUILD_SOLAR_SERIES, return_value=[0.2, 0.8, 0.5])
-    def test_linear_counts_the_cooling_horizon_from_the_capped_base(self, _mock_solar):
+    def test_linear_counts_solar_input_over_the_near_horizon_from_the_capped_base(self):
+        series = [0.6] * _N_COOL
         orch = self._orch()
-        result = orch._estimate_solar_load_peak("lr", 25.3, 24.5, 0.2, 30.0)
-        assert result == pytest.approx(24.5 + COVER_DEFAULT_BETA_S * 0.8 * COVER_COOLING_LOOKAHEAD_H)
-        assert COVER_COOLING_LOOKAHEAD_H > COVER_LINEAR_LOOKAHEAD_H
+        with patch(_BUILD_SOLAR_SERIES, return_value=series) as bs:
+            result = orch._estimate_solar_load_peak("lr", 25.3, 24.5, 0.2, 30.0)
+        assert bs.call_args.args[2] == _N_COOL
+        assert result == pytest.approx(24.5 + COVER_DEFAULT_BETA_S * 0.6 * COVER_COOLING_LOOKAHEAD_H)
 
-    @patch(_BUILD_SOLAR_SERIES, return_value=[0.5])
+    def test_morning_sun_far_ahead_does_not_count(self):
+        """Only the next hours count: a rising morning series gives a small estimate."""
+        series = [0.05 * i / _N_COOL for i in range(_N_COOL)]
+        orch = self._orch()
+        with patch(_BUILD_SOLAR_SERIES, return_value=series):
+            result = orch._estimate_solar_load_peak("lr", 24.5, 24.5, 0.05, 20.0)
+        assert result - 24.5 < 0.2
+
+    @patch(_BUILD_SOLAR_SERIES, return_value=[0.5] * _N_COOL)
     def test_linear_below_target_starts_at_room_temperature(self, _mock_solar):
         orch = self._orch()
         result = orch._estimate_solar_load_peak("lr", 22.0, 24.5, 0.5, 20.0)
         assert result == pytest.approx(22.0 + COVER_DEFAULT_BETA_S * 0.5 * COVER_COOLING_LOOKAHEAD_H)
 
-    @patch(_BUILD_SOLAR_SERIES, return_value=[0.5])
+    @patch(_BUILD_SOLAR_SERIES, return_value=[0.5] * _N_COOL)
     def test_no_room_temperature_starts_at_target(self, _mock_solar):
         orch = self._orch()
         result = orch._estimate_solar_load_peak("lr", None, 24.5, 0.5, 20.0)
@@ -1926,31 +1945,31 @@ class TestEstimateSolarLoadPeak:
 
     @patch(_BUILD_SOLAR_SERIES, return_value=[])
     def test_empty_series_falls_back_to_current_q_solar(self, _mock_solar):
-        orch = self._orch(n_idle=COVER_MIN_IDLE_FOR_LEARNED, confident=True)
+        orch = self._orch()
         result = orch._estimate_solar_load_peak("lr", 24.5, 24.5, 0.4, 20.0)
         assert result == pytest.approx(24.5 + COVER_DEFAULT_BETA_S * 0.4 * COVER_COOLING_LOOKAHEAD_H)
 
-    @patch(_BUILD_SOLAR_SERIES, return_value=[0.05, 0.05])
+    @patch(_BUILD_SOLAR_SERIES, return_value=[0.0, 0.0])
     def test_model_ignores_heat_from_outdoors(self, _mock_solar):
         """Above the target only the sun's share counts: shading cannot stop a hot outdoor temperature."""
         orch = self._orch(n_idle=COVER_MIN_IDLE_FOR_LEARNED, confident=True)
         model = MagicMock()
         model.predict_trajectory.side_effect = [[24.5, 26.0, 28.0], [24.5, 25.5, 27.0]]
         orch._model_manager.get_model.return_value = model
-        result = orch._estimate_solar_load_peak("lr", 24.5, 24.5, 0.05, 32.0)
+        result = orch._estimate_solar_load_peak("lr", 24.5, 24.5, 0.0, 32.0)
         # pointwise 24.5, 26.0 - 1.0, 28.0 - 2.5
         assert result == pytest.approx(25.5)
         assert "q_solar_series" not in model.predict_trajectory.call_args_list[1].kwargs
 
-    @patch(_BUILD_SOLAR_SERIES, return_value=[0.05, 0.05])
+    @patch(_BUILD_SOLAR_SERIES, return_value=[0.0, 0.0])
     def test_model_below_target_counts_the_whole_rise(self, _mock_solar):
         orch = self._orch(n_idle=COVER_MIN_IDLE_FOR_LEARNED, confident=True)
         model = MagicMock()
         model.predict_trajectory.side_effect = [[23.0, 25.0, 27.0], [23.0, 23.2, 23.4]]
         orch._model_manager.get_model.return_value = model
-        assert orch._estimate_solar_load_peak("lr", 23.0, 24.5, 0.05, 25.0) == pytest.approx(27.0)
+        assert orch._estimate_solar_load_peak("lr", 23.0, 24.5, 0.0, 25.0) == pytest.approx(27.0)
 
-    @patch(_BUILD_SOLAR_SERIES, return_value=[0.8, 0.8])
+    @patch(_BUILD_SOLAR_SERIES, return_value=[0.8] * _N_COOL)
     def test_linear_is_the_floor_for_a_model_that_lost_its_solar_gain(self, _mock_solar):
         orch = self._orch(n_idle=COVER_MIN_IDLE_FOR_LEARNED, confident=True)
         model = MagicMock()
@@ -1959,19 +1978,101 @@ class TestEstimateSolarLoadPeak:
         result = orch._estimate_solar_load_peak("lr", 24.5, 24.5, 0.8, 30.0)
         assert result == pytest.approx(24.5 + COVER_DEFAULT_BETA_S * 0.8 * COVER_COOLING_LOOKAHEAD_H)
 
-    @patch(_BUILD_SOLAR_SERIES, return_value=[0.5])
+    @patch(_BUILD_SOLAR_SERIES, return_value=[0.5] * _N_COOL)
     def test_model_error_falls_back_to_linear(self, _mock_solar):
         orch = self._orch(n_idle=COVER_MIN_IDLE_FOR_LEARNED, confident=True)
         orch._model_manager.get_model.side_effect = RuntimeError("no model")
         result = orch._estimate_solar_load_peak("lr", 24.5, 24.5, 0.5, 30.0)
         assert result == pytest.approx(24.5 + COVER_DEFAULT_BETA_S * 0.5 * COVER_COOLING_LOOKAHEAD_H)
 
-    def test_oriented_series_used_with_azimuths(self):
+    def test_orientation_keeps_ghi_strength_while_the_sun_faces_the_window(self):
         orch = self._orch()
-        with patch(
-            "custom_components.roommind.managers.cover_orchestrator.build_oriented_solar_series",
-            return_value=[0.3],
-        ) as oriented:
+        series = [0.6] * _N_COOL
+        with patch(_BUILD_SOLAR_SERIES, return_value=series), patch(_AZIMUTH, return_value=180.0):
+            facing = orch._estimate_solar_load_peak("lr", 24.5, 24.5, 0.6, 30.0, [180.0])
+        with patch(_BUILD_SOLAR_SERIES, return_value=series):
+            unoriented = orch._estimate_solar_load_peak("lr", 24.5, 24.5, 0.6, 30.0)
+        assert facing == pytest.approx(unoriented)
+
+    def test_orientation_drops_sun_behind_the_facade(self):
+        orch = self._orch()
+        with patch(_BUILD_SOLAR_SERIES, return_value=[0.6] * _N_COOL), patch(_AZIMUTH, return_value=180.0):
+            result = orch._estimate_solar_load_peak("lr", 24.5, 24.5, 0.6, 30.0, [0.0])
+        assert result == pytest.approx(24.5)
+
+    def test_orientation_follows_the_sun_through_the_horizon(self):
+        """Sun reaches the facade half way through the horizon: half the input counts."""
+        orch = self._orch()
+        azimuths = [90.0] * (_N_COOL // 2) + [180.0] * (_N_COOL - _N_COOL // 2)
+        with (
+            patch(_BUILD_SOLAR_SERIES, return_value=[0.6] * _N_COOL),
+            patch(_AZIMUTH, side_effect=azimuths) as az,
+        ):
             result = orch._estimate_solar_load_peak("lr", 24.5, 24.5, 0.6, 30.0, [180.0])
-        oriented.assert_called_once()
-        assert result == pytest.approx(24.5 + COVER_DEFAULT_BETA_S * 0.3 * COVER_COOLING_LOOKAHEAD_H)
+        assert az.call_count == _N_COOL
+        expected = COVER_DEFAULT_BETA_S * _input_h([0.6] * (_N_COOL - _N_COOL // 2))
+        assert result == pytest.approx(24.5 + expected)
+
+
+class TestSunlitWeight:
+    @pytest.mark.parametrize(
+        ("sun", "facade", "weight"),
+        [
+            (180.0, 180.0, 1.0),
+            (180.0 + COVER_DIRECT_SUN_ANGLE_DEG, 180.0, 1.0),
+            (90.0, 180.0, 0.0),
+            (0.0, 180.0, 0.0),
+            (350.0, 0.0, 1.0),
+        ],
+    )
+    def test_weight(self, sun, facade, weight):
+        assert CoverOrchestrator._sunlit_weight(sun, [facade]) == pytest.approx(weight, abs=1e-9)
+
+    def test_partial_between_full_angle_and_parallel(self):
+        w = CoverOrchestrator._sunlit_weight(180.0 + 75.0, [180.0])
+        assert 0.0 < w < 1.0
+
+    def test_corner_room_averages_the_covers(self):
+        assert CoverOrchestrator._sunlit_weight(180.0, [180.0, 0.0]) == pytest.approx(0.5)
+
+
+class TestShadeByNeedWiring:
+    @pytest.mark.asyncio
+    async def test_room_that_cools_shades_by_need(self):
+        cm = _make_cover_manager()
+        orch = CoverOrchestrator(_make_hass(), cm, _make_model_manager())
+        with patch.object(CoverOrchestrator, "_estimate_solar_load_peak", return_value=26.0):
+            await _process(orch, _ac_room())
+        assert cm.evaluate.call_args[1]["shade_by_need"] is True
+
+    @pytest.mark.asyncio
+    async def test_room_without_cooling_keeps_the_old_mapping(self):
+        cm = _make_cover_manager()
+        orch = CoverOrchestrator(_make_hass(), cm, _make_model_manager())
+        with patch.object(CoverOrchestrator, "_estimate_solar_peak_temp", return_value=26.0):
+            await _process(orch, _make_room(covers=["cover.b"]))
+        assert cm.evaluate.call_args[1]["shade_by_need"] is False
+
+    @pytest.mark.asyncio
+    async def test_sun_not_on_the_facade_now_keeps_the_cover_open(self):
+        cm = _make_cover_manager()
+        orch = CoverOrchestrator(_make_hass(), cm, _make_model_manager())
+        room = _ac_room(cover_orientations={"cover.b": 0})
+        with (
+            patch.object(CoverOrchestrator, "_estimate_solar_load_peak", return_value=28.0),
+            patch(_AZIMUTH, return_value=180.0),
+        ):
+            await _process(orch, room, q_solar=0.8)
+        assert cm.evaluate.call_args[1]["predicted_peak_temp"] == 24.5
+
+    @pytest.mark.asyncio
+    async def test_sun_on_the_facade_uses_full_ghi_for_the_gate(self):
+        cm = _make_cover_manager()
+        orch = CoverOrchestrator(_make_hass(), cm, _make_model_manager())
+        room = _ac_room(cover_orientations={"cover.b": 180})
+        with (
+            patch.object(CoverOrchestrator, "_estimate_solar_load_peak", return_value=28.0),
+            patch(_AZIMUTH, return_value=200.0),
+        ):
+            await _process(orch, room, q_solar=0.2)
+        assert cm.evaluate.call_args[1]["predicted_peak_temp"] == pytest.approx(28.0)

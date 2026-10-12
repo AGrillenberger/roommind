@@ -162,6 +162,7 @@ class CoverManager:
         covers_deploy_threshold: float,
         covers_min_position: int,
         covers_snap_deploy: bool = False,
+        shade_by_need: bool = False,
         predicted_peak_temp: float | None,
         target_temp: float,
         q_solar: float,
@@ -258,6 +259,12 @@ class CoverManager:
 
         if covers_snap_deploy:
             desired_pos = covers_min_position
+        elif shade_by_need:
+            # Close just far enough that the solar overshoot left over is the
+            # threshold: shading factor threshold/excess, cover effectiveness
+            # COVER_MAX_EFFECTIVENESS. The unit cools what is left, the room keeps daylight.
+            needed = (1.0 - covers_deploy_threshold / excess) / COVER_MAX_EFFECTIVENESS
+            desired_pos = max(covers_min_position, 100 - int(min(1.0, needed) * 100))
         else:
             raw_close_pct = min(100, int((excess - covers_deploy_threshold) * COVER_POS_SCALE))
             desired_pos = max(covers_min_position, 100 - raw_close_pct)

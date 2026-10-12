@@ -14,6 +14,7 @@ from ..const import (
     COVER_COOLING_LOOKAHEAD_H,
     COVER_DAILY_LOOKAHEAD_H,
     COVER_DEFAULT_BETA_S,
+    COVER_DIRECT_SUN_ANGLE_DEG,
     COVER_LINEAR_LOOKAHEAD_H,
     COVER_MAX_PREDICTION_STD,
     COVER_MIN_IDLE_FOR_LEARNED,
@@ -233,9 +234,13 @@ class CoverOrchestrator:
         if _surface_azimuths and q_solar > 0:
             _now = time.time()
             _sun_az = solar_azimuth(self.hass.config.latitude, self.hass.config.longitude, _now)
-            _sun_el = solar_elevation(self.hass.config.latitude, self.hass.config.longitude, _now)
-            _factors = [surface_irradiance_factor(_sun_az, _sun_el, az) for az in _surface_azimuths]
-            _oriented_q_solar = q_solar * (sum(_factors) / len(_factors))
+            if can_cool:
+                # GHI strength while the sun is on this facade, see _sunlit_weight()
+                _oriented_q_solar = q_solar * self._sunlit_weight(_sun_az, _surface_azimuths)
+            else:
+                _sun_el = solar_elevation(self.hass.config.latitude, self.hass.config.longitude, _now)
+                _factors = [surface_irradiance_factor(_sun_az, _sun_el, az) for az in _surface_azimuths]
+                _oriented_q_solar = q_solar * (sum(_factors) / len(_factors))
 
         now = time.time()
         smoothed_temp = self._smooth_temp(area_id, current_temp, now)
@@ -299,6 +304,7 @@ class CoverOrchestrator:
             covers_deploy_threshold=room.get("covers_deploy_threshold", 1.5),
             covers_min_position=room.get("covers_min_position", 0),
             covers_snap_deploy=room.get("covers_snap_deploy", False),
+            shade_by_need=can_cool,
             predicted_peak_temp=_cover_predicted_peak,
             target_temp=cover_target,
             q_solar=q_solar,
@@ -408,30 +414,34 @@ class CoverOrchestrator:
     ) -> float:
         """Peak temperature the sun alone would cause in a room that can cool.
 
-        Starts at ``min(current_temp, target_temp)``: above the target the unit
-        holds or should hold the room, and the question is only what the sun
-        adds from there. Heat the room would gain without sun (a hot outdoor
-        temperature) is not counted above the target, shading cannot stop it:
+        Looks only ``COVER_COOLING_LOOKAHEAD_H`` ahead, so the cover moves when
+        the load arrives, not at sunrise for the midday sun. Starts at
+        ``min(current_temp, target_temp)``: above the target the unit holds or
+        should hold the room, and the question is only what the sun adds from
+        there. Heat the room would gain without sun (a hot outdoor temperature)
+        is not counted above the target, shading cannot stop it:
         peak = max_t [T_sun(t) - max(0, T_nosun(t) - target)].
 
-        Linear estimate from the daily solar peak with the default gain over
-        ``COVER_COOLING_LOOKAHEAD_H`` (the unit removes all solar heat, none is
-        lost through the envelope), raised by the RC model trajectories with
-        and without sun when the idle model is confident. The linear estimate
-        is the floor: in an AC room the learned solar gain swings with every
-        compressor cycle and falls towards zero while cooling holds the room.
+        Linear estimate: default gain times the solar input over the horizon
+        (no envelope loss, the unit removes all solar heat). It is raised by the
+        RC model trajectories with and without sun when the idle model is
+        confident, and stays the floor: in an AC room the learned solar gain
+        swings with every compressor cycle and falls towards zero while cooling
+        holds the room. With cover orientations the series is GHI weighted by
+        whether the sun is on the facade (see _sunlit_weight).
         """
         base_temp = min(current_temp, target_temp) if current_temp is not None else target_temp
-        n_steps = int(COVER_DAILY_LOOKAHEAD_H * 60 / COVER_PREDICTION_DT_MINUTES)
-        solar_series = self._solar_series(n_steps, surface_azimuths)
-        q_solar_peak = max(solar_series) if solar_series else q_solar
-        linear_peak = base_temp + COVER_DEFAULT_BETA_S * q_solar_peak * COVER_COOLING_LOOKAHEAD_H
+        n_steps = max(1, int(COVER_COOLING_LOOKAHEAD_H * 60 / COVER_PREDICTION_DT_MINUTES))
+        solar_series = self._sunlit_solar_series(n_steps, surface_azimuths)
+        if not solar_series:
+            solar_series = [q_solar] * n_steps
+        solar_input_h = sum(solar_series) * COVER_PREDICTION_DT_MINUTES / 60.0
+        linear_peak = base_temp + COVER_DEFAULT_BETA_S * solar_input_h
 
         try:
             n_idle, _, _ = self._model_manager.get_mode_counts(area_id)
             if (
-                solar_series
-                and n_idle >= COVER_MIN_IDLE_FOR_LEARNED
+                n_idle >= COVER_MIN_IDLE_FOR_LEARNED
                 and outdoor_temp is not None
                 and self._idle_solar_model_confident(area_id, base_temp, outdoor_temp)
             ):
@@ -455,6 +465,38 @@ class CoverOrchestrator:
         except Exception:  # noqa: BLE001
             pass
         return linear_peak
+
+    def _sunlit_solar_series(self, n_steps: int, surface_azimuths: list[float] | None) -> list[float]:
+        """GHI series, weighted per step by how directly the sun faces the covers.
+
+        Orientation decides *when* the sun is on the window, GHI how strong it
+        is: the learned and the default solar gain are both per unit GHI, and
+        scaling by the vertical incidence factor halved the load at noon.
+        """
+        lat = self.hass.config.latitude
+        lon = self.hass.config.longitude
+        series = build_solar_series(
+            lat, lon, n_steps, dt_minutes=COVER_PREDICTION_DT_MINUTES, cloud_series=self._cloud_series
+        )
+        if not surface_azimuths:
+            return series
+        now = time.time()
+        dt_s = COVER_PREDICTION_DT_MINUTES * 60.0
+        return [
+            q * self._sunlit_weight(solar_azimuth(lat, lon, now + i * dt_s), surface_azimuths)
+            for i, q in enumerate(series)
+        ]
+
+    @staticmethod
+    def _sunlit_weight(sun_azimuth: float, surface_azimuths: list[float]) -> float:
+        """Share of the covers the sun shines on directly, 0..1, averaged over the covers.
+
+        Full weight within ``COVER_DIRECT_SUN_ANGLE_DEG`` of the facade normal,
+        fading to 0 when the sun runs parallel to the facade or behind it.
+        """
+        full = math.cos(math.radians(COVER_DIRECT_SUN_ANGLE_DEG))
+        weights = [max(0.0, min(1.0, math.cos(math.radians(sun_azimuth - az)) / full)) for az in surface_azimuths]
+        return sum(weights) / len(weights)
 
     def _solar_series(self, n_steps: int, surface_azimuths: list[float] | None) -> list[float]:
         """Unshaded solar series for the cover lookahead, oriented when azimuths are known."""
