@@ -162,6 +162,9 @@ def test_cover_metrics_count_moves_and_shading_per_local_day():
     assert m["max_commands_per_day"] == 2
     assert m["commands_per_day"] == pytest.approx(2.0)
     assert m["shaded_h"] == pytest.approx(4.0)
+    assert m["mean_shaded_position"] == pytest.approx((3 * 40 + 60) / 4)
+    assert m["earliest_first_move_h"] == pytest.approx(6.0)  # day 2, 06:00
+    assert m["mean_first_move_h"] == pytest.approx(9.0)
     assert m["shaded_while_heating_h"] == pytest.approx(1.0)
     assert m["sunny_days"] == 2
     assert m["sunny_days_unshaded"] == 1
@@ -173,3 +176,5 @@ def test_cover_metrics_without_sun_or_moves():
     assert m["max_commands_per_day"] == 0
     assert m["shaded_h"] == 0.0
     assert m["sunny_days"] == 0
+    assert m["earliest_first_move_h"] is None
+    assert m["mean_shaded_position"] is None

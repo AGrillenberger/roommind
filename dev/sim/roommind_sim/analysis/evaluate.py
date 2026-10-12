@@ -204,7 +204,8 @@ def _lines(metrics: dict[str, Any], warnings: list[dict[str, Any]]) -> list[str]
         )
     for eid, m in metrics.get("covers", {}).items():
         lines.append(
-            f"cover {eid}: {m['commands']} cmds (max {m['max_commands_per_day']}/day), shaded {m['shaded_h']} h "
+            f"cover {eid}: {m['commands']} cmds (max {m['max_commands_per_day']}/day, first move from "
+            f"{m['earliest_first_move_h']} h), shaded {m['shaded_h']} h at {m['mean_shaded_position']} % "
             f"({m['shaded_while_heating_h']} h while heating), "
             f"{m['sunny_days_unshaded']} of {m['sunny_days']} sunny days unshaded"
         )

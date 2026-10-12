@@ -208,7 +208,10 @@ def _cover_metrics(run: RunData, eid: str, area: str) -> dict[str, Any]:
     """Moves RoomMind commanded and how the cover shaded, per local calendar day.
 
     Manual moves from the timeline are world actions, not service calls, so only
-    RoomMind's own commands count. ``sunny_days_unshaded`` counts days with a GHI
+    RoomMind's own commands count; ``earliest_first_move_h`` / ``mean_first_move_h``
+    are the local time (decimal hours) of the first command of a day.
+    ``mean_shaded_position`` averages the position while shading (below
+    ``COVER_SHADED_BELOW``). ``sunny_days_unshaded`` counts days with a GHI
     peak of at least ``SUNNY_GHI_W_M2`` on which the cover never shaded within
     ``SUNNY_HOURS``; ``shaded_while_heating_h`` the hours a shading cover overlapped
     with RoomMind reporting the room as heating.
@@ -220,10 +223,14 @@ def _cover_metrics(run: RunData, eid: str, area: str) -> dict[str, Any]:
 
     cmds = [c for c in run.commands if c["entity_id"] == eid and str(c.get("result", "")).startswith("accepted")]
     per_day = Counter(day(c["t"]) for c in cmds)
-    shaded_h = heating_h = 0.0
+    first_move: dict[str, float] = {}
+    for c in cmds:
+        local = datetime.fromtimestamp(c["t"], tz)
+        first_move.setdefault(day(c["t"]), local.hour + local.minute / 60)
+    shaded_h = heating_h = shaded_pos_h = 0.0
     ghi_peak: dict[str, float] = {}
     shaded_days: set[str] = set()
-    prev: tuple[float, bool] | None = None
+    prev: tuple[float, bool, float] | None = None
     for s in run.samples:
         d = day(s["t"])
         ghi_peak[d] = max(ghi_peak.get(d, 0.0), s.get("outdoor", {}).get("ghi", 0.0))
@@ -234,17 +241,21 @@ def _cover_metrics(run: RunData, eid: str, area: str) -> dict[str, Any]:
         if prev is not None and prev[1]:
             dt_h = (s["t"] - prev[0]) / 3600
             shaded_h += dt_h
+            shaded_pos_h += prev[2] * dt_h
             obs = run.observer_at(prev[0])
             if obs is not None and (obs["rooms"].get(area) or {}).get("mode") == "heating":
                 heating_h += dt_h
-        prev = (s["t"], shaded)
+        prev = (s["t"], shaded, cover["position"] if cover is not None else 100.0)
     sunny = [d for d, peak in ghi_peak.items() if peak >= SUNNY_GHI_W_M2]
     days = max((run.end - run.start) / 86400, 1e-9)
     return {
         "commands": len(cmds),
         "commands_per_day": round(len(cmds) / days, 2),
         "max_commands_per_day": max(per_day.values(), default=0),
+        "earliest_first_move_h": round(min(first_move.values()), 2) if first_move else None,
+        "mean_first_move_h": round(sum(first_move.values()) / len(first_move), 2) if first_move else None,
         "shaded_h": round(shaded_h, 2),
+        "mean_shaded_position": round(shaded_pos_h / shaded_h, 1) if shaded_h else None,
         "shaded_while_heating_h": round(heating_h, 2),
         "sunny_days": len(sunny),
         "sunny_days_unshaded": sum(1 for d in sunny if d not in shaded_days),

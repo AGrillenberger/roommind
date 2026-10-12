@@ -15,6 +15,11 @@ house:
   rooms:
     wohnzimmer:
       devices: [{entity_id: climate.wz_ac, profile: generic_split_ac, cool_capacity_w: 3500}]
+roommind:
+  rooms:
+    # Model reference: shading would change the solar input the EKF sees.
+    # covers-shade-before-cooling switches it back on.
+    wohnzimmer: {covers_auto_enabled: false}
 timeline: []
 expect:
   # seeds 1-3 learn 1.7-2.0 (truth ~1.3); 0.3-3.1 before the rebound term
