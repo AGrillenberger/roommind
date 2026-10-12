@@ -58,7 +58,7 @@ from ..utils.device_utils import (
 )
 from ..utils.temp_utils import celsius_delta_to_ha, celsius_to_ha_temp
 from .mpc_optimizer import MPCOptimizer, MPCPlan, slow_start_penalty
-from .residual_heat import get_min_run_blocks
+from .residual_heat import get_min_run_blocks, mean_rebound
 from .thermal_model import RoomModelManager
 
 if TYPE_CHECKING:
@@ -908,6 +908,7 @@ class MPCController:
         mode_on_since: float | None = None,
         shading_factor: float = 1.0,
         q_occupancy: float = 0.0,
+        q_rebound: float | None = None,
     ) -> None:
         self.hass = hass
         self.room_config = room_config
@@ -935,6 +936,8 @@ class MPCController:
         self._mode_on_since = mode_on_since
         self._shading_factor = shading_factor
         self.q_occupancy = q_occupancy
+        # AC rebound charge now (residual_heat); None leaves the air/mass term out
+        self.q_rebound = q_rebound
         self._idle_targets: TargetTemps | None = None
         self._force_off = False
         # Strictest heat / cool target within the MPC guard window (set by _evaluate_mpc)
@@ -1051,6 +1054,7 @@ class MPCController:
             q_solar=self.q_solar * self._shading_factor,
             q_residual=self.q_residual,
             q_occupancy=self.q_occupancy,
+            q_rebound=None if self.q_rebound is None else mean_rebound(self.q_rebound, False, dt_minutes),
         )
 
     def _evaluate_mpc(
@@ -1141,6 +1145,7 @@ class MPCController:
             residual_series=residual_series,
             occupancy_series=occupancy_series,
             initial_mode=self.previous_mode,
+            rebound_charge=self.q_rebound,
         )
         self.last_plan = plan
         # Shading can attenuate solar gain, never the body heat of whoever just
@@ -1155,6 +1160,7 @@ class MPCController:
                 solar_series=solar_series,
                 residual_series=residual_series,
                 occupancy_series=None,
+                rebound_charge=self.q_rebound,
             )
             if self.q_occupancy > 0
             else None
@@ -1315,6 +1321,7 @@ class MPCController:
             q_solar=self.q_solar * self._shading_factor,
             q_residual=self.q_residual,
             q_occupancy=self.q_occupancy,
+            rebound_charge=self.q_rebound,
         )
         return max(pf, MIN_POWER_FRACTION) if pf_mode == mode else MIN_POWER_FRACTION
 
@@ -1430,7 +1437,8 @@ class MPCController:
         if target_temp is None:
             return int(MIN_HORIZON_HOURS * 60 / PLAN_DT_MINUTES)
         delta = abs(current_temp - target_temp) + 3.0  # extra margin
-        Q_max = max(model.Q_heat, model.Q_cool)
+        # Q_fast: the air pull-down of an AC room is part of how fast it reaches the target
+        Q_max = max(model.Q_heat, model.Q_cool + model.Q_fast)
         if Q_max > 0:
             rate = Q_max / (model.C * 60)  # °C/min approx
             if rate > 0:

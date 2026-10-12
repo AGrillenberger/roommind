@@ -56,6 +56,7 @@ from .control.mpc_controller import (
     get_can_heat_cool,
     is_mpc_active,
 )
+from .control.residual_heat import mean_rebound
 from .control.solar import compute_q_solar_norm
 from .control.thermal_model import RoomModelManager
 from .managers.ac_coil_dry_manager import AcCoilDryManager, CoilDryRoomResult
@@ -69,7 +70,7 @@ from .managers.cover_orchestrator import CoverOrchestrator, CoverResult
 from .managers.ekf_training_manager import EkfTrainingManager
 from .managers.heat_source_orchestrator import HeatSourcePlan, evaluate_heat_sources
 from .managers.mold_manager import MoldManager
-from .managers.residual_heat_tracker import ResidualHeatTracker
+from .managers.residual_heat_tracker import AcReboundTracker, ResidualHeatTracker
 from .managers.valve_manager import ValveManager
 from .managers.weather_manager import WeatherManager
 from .managers.window_manager import WindowManager
@@ -171,6 +172,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._mold_manager = MoldManager(hass)
         # Residual heat tracking (heating → idle transition)
         self._residual_tracker = ResidualHeatTracker()
+        # AC rebound charge (air pulled below the building mass while cooling)
+        self._rebound_tracker = AcReboundTracker()
         # EKF training accumulation
         self._ekf_training = EkfTrainingManager(self._model_manager)
         # Cover/blind automatic control
@@ -362,6 +365,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                                 Q,
                                 3.0,
                                 q_solar=self._current_q_solar * rs.get("shading_factor", 1.0),
+                                q_rebound=mean_rebound(
+                                    self._rebound_tracker.get_charge(area_id), model.cooling_drive(Q), 3.0
+                                ),
                             )
                         # Sanity clamp: prevent unrealistic jumps in one prediction step
                         clamped = max(
@@ -709,6 +715,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             system_type,
             self._previous_modes.get(area_id, MODE_IDLE),
         )
+        q_rebound = self._rebound_tracker.get_charge(area_id)
 
         # Read current cover positions for shading factor
         cover_eids: list[str] = room.get("covers", [])
@@ -744,6 +751,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             heating_system_type=system_type,
             shading_factor=shading_factor,
             q_occupancy=q_occupancy,
+            q_rebound=q_rebound,
         )
         mode, power_fraction = await controller.async_evaluate(current_temp, targets)
 
@@ -1093,6 +1101,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             q_residual=q_residual,
             shading_factor=shading_factor,
             q_occupancy=q_occupancy,
+            q_rebound=q_rebound,
             has_external_sensor=has_external_sensor,
             heat_source_plan=heat_source_plan,
             climate_active=climate_active,
@@ -1151,6 +1160,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         q_occupancy: float,
         has_external_sensor: bool,
         heat_source_plan: Any | None,
+        q_rebound: float | None = None,
         climate_active: bool,
         coil_dry_skip_training: bool = False,
     ) -> tuple[str, float]:
@@ -1282,9 +1292,12 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 can_cool=can_cool,
                 dt_minutes=UPDATE_INTERVAL / 60.0,
                 q_occupancy=q_occupancy,
+                q_rebound=q_rebound,
             )
         else:
             self._ekf_training.clear(area_id)
+        # Same mode the EKF learns from, so the charge matches its labels.
+        self._rebound_tracker.update(area_id, ekf_mode)
 
         # Update mode-start tracking for min-run enforcement in the next cycle
         _prev_mode = self._previous_modes.get(area_id, MODE_IDLE)
@@ -1925,6 +1938,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._ekf_training.remove_room(area_id)
         self._pending_predictions.pop(area_id, None)
         self._residual_tracker.remove_room(area_id)
+        self._rebound_tracker.remove_room(area_id)
         self._cover_orchestrator.remove_room(area_id)
         self._entity_areas.discard(area_id)
         self._mode_on_since.pop(area_id, None)

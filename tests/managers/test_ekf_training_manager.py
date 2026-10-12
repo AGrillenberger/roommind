@@ -49,6 +49,7 @@ class TestFlush:
             q_solar=0.0,
             q_residual=0.0,
             q_occupancy=0.0,
+            q_rebound=None,
         )
         assert "room1" not in mgr._accumulated_dt
         assert "room1" not in mgr._accumulated_mode
@@ -293,3 +294,47 @@ class TestClearAndRemove:
 
     def test_remove_nonexistent_room_no_error(self, mgr):
         mgr.remove_room("nonexistent")
+
+
+def test_rebound_is_averaged_over_the_batch():
+    """The EKF gets the dt-weighted mean charge of a batch, not the value at flush time."""
+    model_manager = MagicMock()
+    mgr = EkfTrainingManager(model_manager)
+    common = dict(
+        T_outdoor=30.0,
+        ekf_mode="idle",
+        ekf_pf=0.0,
+        window_open=False,
+        raw_open=False,
+        q_residual=0.0,
+        shading_factor=1.0,
+        q_solar=0.0,
+        can_heat=False,
+        can_cool=True,
+        dt_minutes=1.5,
+    )
+    mgr.process("room1", current_temp=24.0, q_rebound=0.6, **common)
+    model_manager.update.assert_not_called()
+    mgr.process("room1", current_temp=24.2, q_rebound=0.2, **common)
+    assert model_manager.update.call_args.kwargs["q_rebound"] == pytest.approx(0.4)
+
+
+def test_rebound_none_drops_the_batch_mean():
+    model_manager = MagicMock()
+    mgr = EkfTrainingManager(model_manager)
+    common = dict(
+        T_outdoor=30.0,
+        ekf_mode="idle",
+        ekf_pf=0.0,
+        window_open=False,
+        raw_open=False,
+        q_residual=0.0,
+        shading_factor=1.0,
+        q_solar=0.0,
+        can_heat=False,
+        can_cool=True,
+        dt_minutes=1.5,
+    )
+    mgr.process("room1", current_temp=24.0, q_rebound=0.6, **common)
+    mgr.process("room1", current_temp=24.2, q_rebound=None, **common)
+    assert model_manager.update.call_args.kwargs["q_rebound"] is None

@@ -18,7 +18,7 @@ from ..const import (
 from ..utils.device_utils import get_ac_eids, get_trv_eids
 from .mpc_controller import fill_missing_targets, get_can_heat_cool
 from .mpc_optimizer import MPCOptimizer
-from .residual_heat import build_residual_series, get_min_run_blocks
+from .residual_heat import advance_rebound, build_residual_series, get_min_run_blocks, mean_rebound
 from .thermal_model import RCModel, ThermalEKF
 
 
@@ -139,6 +139,7 @@ def simulate_prediction(
     heating_duration_minutes: float = 0.0,
     last_power_fraction: float = 1.0,
     q_occupancy: float = 0.0,
+    q_rebound: float | None = None,
 ) -> list[float]:
     """Simulate temperature prediction for the analytics chart.
 
@@ -165,6 +166,7 @@ def simulate_prediction(
             heating_duration_minutes=heating_duration_minutes,
             last_power_fraction=last_power_fraction,
             q_occupancy=q_occupancy,
+            q_rebound=q_rebound,
         )
 
     return _simulate_bangbang(
@@ -181,6 +183,7 @@ def simulate_prediction(
         heating_duration_minutes=heating_duration_minutes,
         last_power_fraction=last_power_fraction,
         q_occupancy=q_occupancy,
+        q_rebound=q_rebound,
     )
 
 
@@ -217,6 +220,7 @@ def _simulate_mpc(
     heating_duration_minutes: float = 0.0,
     last_power_fraction: float = 1.0,
     q_occupancy: float = 0.0,
+    q_rebound: float | None = None,
 ) -> list[float]:
     """Rolling-horizon MPC simulation matching the real controller."""
     ocm = settings.get("outdoor_cooling_min", DEFAULT_OUTDOOR_COOLING_MIN)
@@ -248,6 +252,7 @@ def _simulate_mpc(
     sim_was_heating = False
     # Seed with real residual state
     current_q_residual = q_residual
+    charge = q_rebound
     pred_temps: list[float] = []
 
     for i in range(len(target_forecast)):
@@ -304,6 +309,7 @@ def _simulate_mpc(
                 solar_series=remaining_solar,
                 residual_series=remaining_residual,
                 occupancy_series=remaining_occupancy,
+                rebound_charge=charge,
             )
             action = plan.get_current_action()
             pf = plan.get_current_power_fraction()
@@ -322,7 +328,10 @@ def _simulate_mpc(
             q_solar=qs,
             q_residual=current_q_residual if Q == 0.0 else 0.0,
             q_occupancy=q_occupancy,
+            q_rebound=None if charge is None or Q != 0.0 else mean_rebound(charge, 0.0, 5.0),
         )
+        if charge is not None:
+            charge = advance_rebound(charge, 0.0, 5.0)
         T = max(5.0, min(40.0, T_new))
 
         # Update simulated residual tracking
@@ -372,6 +381,7 @@ def _simulate_bangbang(
     heating_duration_minutes: float = 0.0,
     last_power_fraction: float = 1.0,
     q_occupancy: float = 0.0,
+    q_rebound: float | None = None,
 ) -> list[float]:
     """Bang-bang fallback simulation with mode stickiness + idle rate cap."""
     observed_idle_rate = compute_observed_idle_rate(all_points)
@@ -388,6 +398,7 @@ def _simulate_bangbang(
     sim_heating_blocks = 0
     sim_was_heating = False
     current_q_residual = q_residual
+    charge = q_rebound
     pred_temps: list[float] = []
 
     for i, tf in enumerate(target_forecast):
@@ -432,7 +443,10 @@ def _simulate_bangbang(
             q_solar=qs,
             q_residual=current_q_residual if Q == 0.0 else 0.0,
             q_occupancy=q_occupancy,
+            q_rebound=None if charge is None or Q != 0.0 else mean_rebound(charge, 0.0, 5.0),
         )
+        if charge is not None:
+            charge = advance_rebound(charge, 0.0, 5.0)
         if Q == 0.0 and observed_idle_rate is not None:
             model_delta = T_new - T
             max_delta = observed_idle_rate * 2.0

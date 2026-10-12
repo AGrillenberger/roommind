@@ -37,6 +37,7 @@ def _build_model_info(estimator: Any) -> dict[str, Any]:
         "alpha": round(estimator._x[1], 6),
         "beta_h": round(estimator._x[2], 4),
         "beta_c": round(estimator._x[3], 4),
+        "beta_f": round(estimator._x[6], 4),
         "n_updates": estimator._n_updates,
         "n_idle": estimator._n_idle,
         "n_heating": estimator._n_heating,
@@ -291,6 +292,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, config_entry: 
                 ),
                 4,
             )
+            live_diag["q_rebound"] = round(coordinator._rebound_tracker.get_charge(area_id), 4)
 
         # Schedule entity state
         schedules = config.get("schedules", [])

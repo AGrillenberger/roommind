@@ -5,13 +5,16 @@ releasing stored energy into the room.  This module provides functions to
 compute the decaying residual heat fraction so that the EKF and MPC can
 account for it instead of mis-attributing the continued warming to solar
 gain or insulation effects.
+
+The AC counterpart is the rebound charge: an AC cools the air, which drops
+below the building mass and warms back up after the run (see thermal_model).
 """
 
 from __future__ import annotations
 
 import math
 
-from ..const import HEATING_SYSTEM_PROFILES, RESIDUAL_HEAT_CUTOFF
+from ..const import AC_REBOUND_CUTOFF, AC_REBOUND_TAU_MINUTES, HEATING_SYSTEM_PROFILES, RESIDUAL_HEAT_CUTOFF
 
 
 def compute_residual_heat(
@@ -97,3 +100,26 @@ def get_min_run_blocks(system_type: str, dt_minutes: float = 5.0) -> int:
     if not profile or dt_minutes <= 0:
         return 2  # existing default
     return max(2, math.ceil(profile["min_run_minutes"] / dt_minutes))
+
+
+def advance_rebound(charge: float, drive: float, dt_minutes: float) -> float:
+    """AC rebound charge after *dt_minutes*.
+
+    The charge (0..1) is the air's offset below the building mass relative to a
+    long run. It relaxes towards *drive* (1 while the AC cools, 0 otherwise) with
+    ``AC_REBOUND_TAU_MINUTES``. On/off, not the power fraction: a unit runs near
+    full power until its own sensor is satisfied, a low proportional setpoint
+    does not change that.
+    """
+    if dt_minutes <= 0:
+        return charge
+    result = drive + (charge - drive) * math.exp(-dt_minutes / AC_REBOUND_TAU_MINUTES)
+    return result if result >= AC_REBOUND_CUTOFF else 0.0
+
+
+def mean_rebound(charge: float, drive: float, dt_minutes: float) -> float:
+    """Mean charge over *dt_minutes* starting at *charge* (the ``q_rebound`` of that step)."""
+    if dt_minutes <= 0:
+        return charge
+    tau = AC_REBOUND_TAU_MINUTES
+    return drive + (charge - drive) * tau / dt_minutes * (1.0 - math.exp(-dt_minutes / tau))

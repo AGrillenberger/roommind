@@ -160,6 +160,12 @@ HEATING_SYSTEM_PROFILES: dict[str, dict[str, float]] = {
 }
 RESIDUAL_HEAT_CUTOFF = 0.02  # below this q_residual is treated as zero
 
+# AC rebound: while an AC cools, the air drops below the building mass; after it
+# stops the air relaxes back within minutes. Charge relaxes towards the cooling
+# power fraction while cooling and decays with this time constant otherwise.
+AC_REBOUND_TAU_MINUTES = 10.0
+AC_REBOUND_CUTOFF = 0.01  # below this the rebound charge is treated as zero
+
 # Blind/cover control
 COVER_SOLAR_MIN: float = 0.15
 COVER_HYSTERESIS: float = 1.0

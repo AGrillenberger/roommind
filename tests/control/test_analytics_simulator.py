@@ -1021,3 +1021,35 @@ def test_analytics_simulator_ufh_shows_preheat():
     assert avg_ufh > avg_empty, (
         f"UFH avg temp {avg_ufh:.3f} should exceed empty-type avg {avg_empty:.3f} — UFH pre-heats, empty type waits"
     )
+
+
+def _ac_room_config() -> dict:
+    return {
+        "thermostats": [],
+        "acs": ["climate.ac"],
+        "devices": [{"entity_id": "climate.ac", "type": "ac", "role": "auto", "heating_system_type": ""}],
+        "climate_mode": "cool_only",
+    }
+
+
+@pytest.mark.parametrize("mpc_active", [True, False])
+def test_rebound_charge_warms_the_idle_prediction(mpc_active):
+    """A charged AC room rebounds in the analytics prediction too (both strategies)."""
+    model = RCModel(C=1.0, U=0.02, Q_heat=3.0, Q_cool=2.0, Q_fast=20.0)
+    # cool target far away: both strategies idle, only the rebound moves the room
+    forecast = [{"target_temp": 30.0, "heat_target": None, "cool_target": 30.0}] * 6
+    kwargs = dict(
+        model=model,
+        estimator=ThermalEKF(),
+        target_forecast=forecast,
+        outdoor_series=[24.0] * 6,
+        current_temp=24.0,
+        window_open=False,
+        mpc_active=mpc_active,
+        room_config=_ac_room_config(),
+        settings={},
+        all_points=[],
+    )
+    charged = simulate_prediction(**kwargs, q_rebound=0.8)
+    plain = simulate_prediction(**kwargs)
+    assert charged[0] > plain[0]

@@ -359,6 +359,7 @@ async def build_analytics_data(
                         heating_duration_minutes=sim_heat_dur,
                         last_power_fraction=sim_last_pf,
                         q_occupancy=sim_q_occupancy,
+                        q_rebound=coordinator._rebound_tracker.get_charge(area_id),
                     ),
                 )
 
