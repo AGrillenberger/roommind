@@ -192,6 +192,11 @@ def _demand_lowered(previous: float | None, current: float | None, *, heating: b
     return (previous - current if heating else current - previous) > COMPRESSOR_HOLD_RETARGET_TOLERANCE
 
 
+def _carries_setpoint(data: dict) -> bool:
+    """A set_temperature payload with a single setpoint or a low/high range."""
+    return "temperature" in data or "target_temp_low" in data
+
+
 def _snap_to_step(value: float, step: float | None) -> float:
     if step is None or step <= 0:
         return value
@@ -2367,9 +2372,10 @@ class MPCController:
         the commanded mode, and devices without usable state, whose
         sent-command cache (#416) stays as it is. A compressor hold that sends
         nothing keeps the record; it only matters if the hold ends within the
-        dwell, since a hold lasts the group's minimum run.
+        dwell, since a hold lasts the group's minimum run. Dual-setpoint devices
+        get the proportional value on ``target_temp_low``/``high`` and dwell the same way.
         """
-        if service != "set_temperature" or deadband is None or "temperature" not in data:
+        if service != "set_temperature" or deadband is None or not _carries_setpoint(data):
             return False
         if state is None or _should_use_cache(state):
             return False
@@ -2659,7 +2665,7 @@ class MPCController:
                 _remember_command(eid, service, data)
                 if self._idle_targets is not None:
                     _active_targets[eid] = (self._idle_targets.heat, self._idle_targets.cool)
-                if deadband is not None and service == "set_temperature" and "temperature" in data:
+                if deadband is not None and service == "set_temperature" and _carries_setpoint(data):
                     _proportional_sent[eid] = (_now(), self._current_target_pair())
         except Exception:  # noqa: BLE001
             _LOGGER.warning(

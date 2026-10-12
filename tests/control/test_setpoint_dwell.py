@@ -279,3 +279,86 @@ async def test_backing_off_from_the_boost_waits_for_the_dwell():
         clock["t"] += 30
         await _heat(hass, ctrl, 0.15, current_temp=19.6)
     assert len(_setpoints(hass)) == 1
+
+
+# --- range devices (target_temp_low/high) --------------------------------------------
+
+
+def _range_device(hass, state="heat_cool"):
+    """A dual-setpoint thermostat: the proportional heating setpoint lands on target_temp_low."""
+    dev = MagicMock()
+    dev.state = state
+    dev.attributes = {
+        "hvac_modes": ["heat_cool", "heat", "off"],
+        "target_temp_low": 18.0,
+        "target_temp_high": 24.0,
+        "min_temp": 5.0,
+        "max_temp": 30.5,
+        "target_temp_step": 0.5,
+    }
+    hass.states.get = MagicMock(return_value=dev)
+
+    async def _apply(domain, service, data, **kwargs):
+        if "hvac_mode" in data:
+            dev.state = data["hvac_mode"]
+        for key in ("target_temp_low", "target_temp_high"):
+            if key in data:
+                dev.attributes = {**dev.attributes, key: data[key]}
+
+    hass.services.async_call = AsyncMock(side_effect=_apply)
+    return dev
+
+
+def _range_sends(hass):
+    return [
+        (c[0][2]["target_temp_low"], c[0][2]["target_temp_high"])
+        for c in hass.services.async_call.call_args_list
+        if c[0][1] == "set_temperature"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_range_device_jittering_power_is_sent_once_per_block():
+    """The low setpoint follows the proportional power like a single setpoint (#317 for
+    dual-setpoint thermostats): one send per dwell instead of one per 30 s cycle."""
+    hass = build_hass()
+    _range_device(hass)
+    ctrl = _ctrl(hass)
+    clock = {"t": 1000.0}
+    with patch(_NOW, side_effect=lambda: clock["t"]):
+        for i in range(10):  # 5 min of 30 s cycles, all inside one dwell
+            await _heat(hass, ctrl, 0.5 if i % 2 else 0.25)
+            clock["t"] += 30
+    assert len(_range_sends(hass)) == 1
+
+
+@pytest.mark.asyncio
+async def test_range_device_change_goes_out_after_the_dwell():
+    hass = build_hass()
+    dev = _range_device(hass)
+    ctrl = _ctrl(hass)
+    clock = {"t": 1000.0}
+    with patch(_NOW, side_effect=lambda: clock["t"]):
+        await _heat(hass, ctrl, 0.25)
+        first = dev.attributes["target_temp_low"]
+        clock["t"] += PROPORTIONAL_SETPOINT_DWELL_SECONDS - 1
+        await _heat(hass, ctrl, 1.0)
+        assert len(_range_sends(hass)) == 1
+        clock["t"] += 1
+        await _heat(hass, ctrl, 1.0)
+    sends = _range_sends(hass)
+    assert len(sends) == 2
+    assert sends[1][0] > first
+
+
+@pytest.mark.asyncio
+async def test_range_device_target_change_skips_the_dwell():
+    hass = build_hass()
+    _range_device(hass)
+    ctrl = _ctrl(hass)
+    clock = {"t": 1000.0}
+    with patch(_NOW, side_effect=lambda: clock["t"]):
+        await _heat(hass, ctrl, 0.25)
+        clock["t"] += 30
+        await _heat(hass, ctrl, 0.5, heat=20.5)
+    assert len(_range_sends(hass)) == 2
