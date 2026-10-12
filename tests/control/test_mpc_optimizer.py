@@ -792,3 +792,54 @@ def test_approach_rate_widens_cooling_band_symmetrically():
     assert m1 == MODE_COOLING and m2 == MODE_COOLING
     assert pf_gentle < pf_full
     assert pf_gentle >= MIN_POWER_FRACTION
+
+
+# ---------------------------------------------------------------------------
+# Separate cooling min run (UFH + AC rooms)
+# ---------------------------------------------------------------------------
+
+
+def _first_run_length(actions: list[str], mode: str) -> int:
+    length = 0
+    for a in actions:
+        if a == mode:
+            length += 1
+        elif length:
+            break
+    return length
+
+
+def test_cooling_runs_use_their_own_min_run():
+    """UFH + AC room: the 30-min UFH run time must not stretch the AC's cooling runs."""
+    model = RCModel(C=1.0, U=0.5, Q_heat=4.0, Q_cool=6.0)
+    kwargs = {"can_heat": False, "can_cool": True, "min_run_blocks": 6}
+    series = {
+        "T_outdoor_series": [20.0] * 24,
+        "heat_target_series": [21.0] * 24,
+        "cool_target_series": [24.0] * 24,
+    }
+    ufh_only = MPCOptimizer(model, **kwargs).optimize(T_room=25.5, dt_minutes=5, **series)
+    split = MPCOptimizer(model, cool_min_run_blocks=2, **kwargs).optimize(T_room=25.5, dt_minutes=5, **series)
+    assert _first_run_length(ufh_only.actions, MODE_COOLING) >= 6
+    assert 2 <= _first_run_length(split.actions, MODE_COOLING) < 6
+
+
+def test_candidates_are_judged_over_their_own_min_run():
+    model = RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=1500.0)
+    split = MPCOptimizer(model, min_run_blocks=6, cool_min_run_blocks=2)
+    ac_only = MPCOptimizer(model, min_run_blocks=2)
+    ufh = MPCOptimizer(model, min_run_blocks=6)
+    for opt in (split, ac_only, ufh):
+        opt._lookahead_blocks = 6
+    cool_args = (MODE_COOLING, 25.0, 30.0, 21.0, 24.0, [30.0] * 12, [21.0] * 12, [24.0] * 12, 5.0)
+    heat_args = (MODE_HEATING, 20.0, 5.0, 21.0, 24.0, [5.0] * 12, [21.0] * 12, [24.0] * 12, 5.0)
+    assert split._evaluate_action(*cool_args) == ac_only._evaluate_action(*cool_args)
+    assert split._evaluate_action(*cool_args) != ufh._evaluate_action(*cool_args)
+    assert split._evaluate_action(*heat_args) == ufh._evaluate_action(*heat_args)
+
+
+def test_cooling_min_run_defaults_to_the_heating_one():
+    opt = MPCOptimizer(RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=1500.0), min_run_blocks=4)
+    assert opt._min_run_for(MODE_COOLING) == 4
+    assert opt._min_run_for(MODE_HEATING) == 4
+    assert MPCOptimizer(opt.model, min_run_blocks=4, cool_min_run_blocks=2)._min_run_for(MODE_COOLING) == 2

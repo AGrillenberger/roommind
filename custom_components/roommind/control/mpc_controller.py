@@ -1129,6 +1129,7 @@ class MPCController:
             outdoor_cooling_min=self.outdoor_cooling_min,
             outdoor_heating_max=self.outdoor_heating_max,
             min_run_blocks=min_run,
+            cool_min_run_blocks=get_min_run_blocks("", PLAN_DT_MINUTES),
             override_active=is_override_active(self.room_config),
             heating_system_type=self._heating_system_type,
             approach_rate=self._approach_rate,

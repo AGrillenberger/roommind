@@ -86,6 +86,8 @@ class MPCOptimizer:
     w_comfort: float = 10.0
     w_energy: float = 1.0
     min_run_blocks: int = 2  # minimum 2 blocks (10 min) per run
+    # Cooling always runs on an AC; None = same as min_run_blocks (heating profile)
+    cool_min_run_blocks: int | None = None
     outdoor_cooling_min: float = 16.0
     outdoor_heating_max: float = 22.0
     temp_min: float = 5.0  # frost protection
@@ -186,7 +188,7 @@ class MPCOptimizer:
                 available.append(MODE_COOLING)
 
             # If in a run and below min_run_blocks, must continue
-            if current_mode != MODE_IDLE and blocks_in_mode < self.min_run_blocks:
+            if current_mode != MODE_IDLE and blocks_in_mode < self._min_run_for(current_mode):
                 if current_mode in available:
                     best_action = current_mode
                 else:
@@ -377,6 +379,7 @@ class MPCOptimizer:
             and bool(self.heating_system_type)
         )
         heating_duration_minutes = self.min_run_blocks * dt_minutes
+        run_blocks = self._min_run_for(action)
         if action != MODE_IDLE and not synthesis_enabled:
             Q *= self._hypothesis_power_fraction(
                 action,
@@ -394,9 +397,9 @@ class MPCOptimizer:
         for j in range(lookahead):
             qs = solar[j] if j < len(solar) else 0.0
             qo = occupancy[j] if j < len(occupancy) else 0.0
-            # Simulate HVAC for min_run_blocks (not just 1 block) to correctly
+            # Simulate HVAC for the mode's min run (not just 1 block) to correctly
             # value sustained heating/cooling over the lookahead horizon.
-            block_Q = Q if j < self.min_run_blocks else 0.0
+            block_Q = Q if j < run_blocks else 0.0
             # Residual for the idle / post-run blocks. For the HEATING
             # hypothesis on a gated slow system, synthesize the afterglow this
             # hypothetical run would generate; otherwise fall back to the
@@ -434,7 +437,7 @@ class MPCOptimizer:
                 total_cost += self.w_comfort * (T - c_tgt) ** 2
             # else: inside dead band, no comfort cost
             # Energy cost: proportional to HVAC power for min_run blocks
-            if j < self.min_run_blocks and action != MODE_IDLE:
+            if j < run_blocks and action != MODE_IDLE:
                 total_cost += self.w_energy * abs(Q) / 1000.0
 
         return total_cost
@@ -472,6 +475,12 @@ class MPCOptimizer:
             rebound_charge=rebound_charge,
         )
         return pf if mode == action and pf > 0.0 else 1.0
+
+    def _min_run_for(self, mode: str) -> int:
+        """Minimum run in blocks for *mode*."""
+        if mode == MODE_COOLING and self.cool_min_run_blocks is not None:
+            return self.cool_min_run_blocks
+        return self.min_run_blocks
 
     def _action_to_Q(self, action: str) -> float:
         if action == MODE_HEATING:

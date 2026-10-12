@@ -272,3 +272,21 @@ def test_cooling_min_run_is_the_ac_one_in_a_ufh_room():
     assert ctrl._within_min_run(MODE_COOLING) is False
     ctrl.previous_mode = MODE_HEATING
     assert ctrl._within_min_run(MODE_HEATING) is True
+
+
+def test_optimizer_gets_the_ac_min_run_for_cooling(monkeypatch):
+    """UFH + AC room: the optimizer plans cooling runs with the AC profile like the guard does."""
+    seen: dict = {}
+    real_init = MPCOptimizer.__init__
+
+    def spy(self, *args, **kwargs):
+        seen.update(kwargs)
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(MPCOptimizer, "__init__", spy)
+    _fake_plan(monkeypatch, MODE_IDLE)
+    room = {"climate_mode": "auto", "acs": ["climate.ac1"], "heating_system_type": "underfloor"}
+    ctrl = _controller(room, outdoor_temp=30.0, heating_system_type="underfloor")
+    ctrl._evaluate_mpc(25.0, TargetTemps(heat=21.0, cool=24.0))
+    assert seen["min_run_blocks"] == 6
+    assert seen["cool_min_run_blocks"] == 2
