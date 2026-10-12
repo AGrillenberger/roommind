@@ -1,0 +1,35 @@
+name: heat-source-orchestration-ufh
+extends: heat-source-orchestration
+description: >
+  Underfloor heating plus a heat-pump split with orchestration: above 0 °C outdoor the
+  orchestrator lets the AC close small gaps alone. Those AC runs follow the AC's run
+  rules (10 min min run, 0.2 K start hysteresis, no drift pre-heat), not the screed's
+  30-minute UFH profile. A run that reaches the target keeps its sources: parking every
+  device at the target switched the split on and off every cycle.
+refs: [84, 168]
+tags: [orchestration, ufh, ac]
+start: 2026-02-09T00:00
+duration: 4d
+house:
+  rooms:
+    wohnzimmer:
+      initial: {temperature: 20.5}
+      devices:
+        - {entity_id: climate.wz_fbh, profile: ufh_zone}
+        - {entity_id: climate.wz_split, profile: generic_split_ac}
+roommind:
+  rooms:
+    wohnzimmer:
+      devices:
+        - {entity_id: climate.wz_fbh, type: trv, heating_system_type: underfloor, setpoint_mode: direct, role: primary}
+        - {entity_id: climate.wz_split, type: ac, role: secondary}
+      heat_source_outdoor_threshold: 0.0
+expect:
+  - {invariant: target_never_empty}
+  - {invariant: no_rejected_commands}
+  - {invariant: min_run_commanded}
+  - {metric: comfort.in_band_pct, room: wohnzimmer, min: 85}
+  # main: the split switched with the orchestrator every cycle around the target (26/h)
+  - {metric: device.commands_per_hour, entity_id: climate.wz_split, max: 8}
+  # catches a screed that never starts (the room sat 3 K below target for hours)
+  - {metric: comfort.undershoot_kh, room: wohnzimmer, max: 10}

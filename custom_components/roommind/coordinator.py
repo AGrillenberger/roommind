@@ -135,6 +135,17 @@ def _match_room_entity(parts: str, rooms: dict) -> tuple[str, str] | None:
     return None
 
 
+def _orchestrated_training_power(heat_source_plan: HeatSourcePlan) -> float:
+    """Power fraction the EKF trains an orchestrated heating step with.
+
+    Mean over the devices that actually heat. Parked devices (pf 0) used to count
+    too, so an AC heating alone next to a parked TRV was booked at half its power
+    and the model learned twice its heating rate.
+    """
+    active = [c.power_fraction for c in heat_source_plan.commands if c.active]
+    return sum(active) / len(active) if active else 0.0
+
+
 class RoomMindCoordinator(DataUpdateCoordinator):
     """Central coordinator for RoomMind room data and state."""
 
@@ -752,6 +763,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             shading_factor=shading_factor,
             q_occupancy=q_occupancy,
             q_rebound=q_rebound,
+            previous_heat_sources=self._heat_source_states.get(area_id, "none"),
         )
         mode, power_fraction = await controller.async_evaluate(current_temp, targets)
 
@@ -1213,10 +1225,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 ekf_pf = power_fraction
                 # When heat source orchestration is active, adjust ekf_pf to
                 # reflect the actual power delivered (not all devices may be
-                # heating).  Use the mean of per-device power_fractions so the
-                # EKF learns an accurate aggregated beta_h.
+                # heating).
                 if heat_source_plan is not None and heat_source_plan.commands:
-                    ekf_pf = sum(c.power_fraction for c in heat_source_plan.commands) / len(heat_source_plan.commands)
+                    ekf_pf = _orchestrated_training_power(heat_source_plan)
             else:
                 # Managed Mode: device self-regulates, use observed/inferred
                 # state to avoid training "always heating" (#69).

@@ -290,3 +290,68 @@ def test_optimizer_gets_the_ac_min_run_for_cooling(monkeypatch):
     ctrl._evaluate_mpc(25.0, TargetTemps(heat=21.0, cool=24.0))
     assert seen["min_run_blocks"] == 6
     assert seen["cool_min_run_blocks"] == 2
+
+
+# --- heat source orchestration: an AC heating alone in a UFH room -----------------
+
+ORCH_UFH_ROOM = {
+    "climate_mode": "heat_only",
+    "acs": ["climate.ac1"],
+    "heating_system_type": "underfloor",
+    "heat_source_orchestration": True,
+}
+
+
+def _orchestrated(outdoor_temp: float, **kwargs) -> MPCController:
+    ctrl = _controller(ORCH_UFH_ROOM, outdoor_temp=outdoor_temp, heating_system_type="underfloor", **kwargs)
+    ac = MagicMock()
+    ac.state = "off"
+    ac.attributes = {"hvac_modes": ["off", "heat", "cool"]}
+    trv = MagicMock()
+    trv.state = "heat"
+    trv.attributes = {"hvac_modes": ["off", "heat"]}
+    ctrl.hass.states.get = MagicMock(side_effect=lambda eid: ac if eid == "climate.ac1" else trv)
+    return ctrl
+
+
+def test_ac_heating_alone_gets_the_ac_start_hysteresis(monkeypatch):
+    """Mild weather, small gap: the orchestrator routes to the AC, so the AC's start
+    hysteresis applies, not the UFH 'start whenever the optimizer says so'."""
+    _fake_plan(monkeypatch, MODE_HEATING, lookahead_blocks=24)
+    assert _orchestrated(10.0)._evaluate_mpc(20.9, TargetTemps(heat=21.0, cool=None)) == (MODE_IDLE, 0.0)
+    # cold outside: the boiler/UFH side heats, UFH rules stay
+    assert _orchestrated(0.0)._evaluate_mpc(20.9, TargetTemps(heat=21.0, cool=None))[0] == MODE_HEATING
+
+
+def test_ac_heating_alone_uses_the_ac_min_run():
+    after_ac_min_run = {"previous_mode": MODE_HEATING, "mode_on_since": time.time() - 15 * 60}
+    ctrl = _orchestrated(10.0, previous_heat_sources="secondary", **after_ac_min_run)
+    ctrl._resolve_run_system(21.0, 21.0)  # at target: the running sources decide
+    assert ctrl._within_min_run(MODE_HEATING) is False
+    ufh = _orchestrated(0.0, previous_heat_sources="primary", **after_ac_min_run)
+    ufh._resolve_run_system(21.0, 21.0)
+    assert ufh._within_min_run(MODE_HEATING) is True
+
+
+def test_ac_heating_alone_does_not_preheat_on_drift(monkeypatch):
+    """At the target, a UFH room may pre-heat on a predicted dip; an AC alone may not."""
+    _fake_plan(monkeypatch, MODE_HEATING, pf=0.8, lookahead_blocks=24)
+    ctrl = _orchestrated(10.0, previous_heat_sources="secondary")
+    monkeypatch.setattr(ctrl, "_predict_idle_drift", lambda *_: 20.0)
+    assert ctrl._evaluate_mpc(21.0, TargetTemps(heat=21.0, cool=None)) == (MODE_IDLE, 0.0)
+    ufh = _orchestrated(0.0)
+    monkeypatch.setattr(ufh, "_predict_idle_drift", lambda *_: 20.0)
+    assert ufh._evaluate_mpc(21.0, TargetTemps(heat=21.0, cool=None)) == (MODE_HEATING, 0.8)
+
+
+def test_ac_heating_alone_in_the_bang_bang_fallback():
+    after_ac_min_run = {"previous_mode": MODE_HEATING, "mode_on_since": time.time() - 15 * 60}
+    ctrl = _orchestrated(10.0, previous_heat_sources="secondary", **after_ac_min_run)
+    assert ctrl._evaluate_bangbang(21.1, TargetTemps(heat=21.0, cool=None)) == MODE_IDLE
+    ufh = _orchestrated(0.0, previous_heat_sources="primary", **after_ac_min_run)
+    assert ufh._evaluate_bangbang(21.1, TargetTemps(heat=21.0, cool=None)) == MODE_HEATING
+
+
+def test_orchestration_without_ufh_keeps_the_room_rules():
+    ctrl = _controller({**ORCH_UFH_ROOM, "heating_system_type": ""}, outdoor_temp=10.0)
+    assert ctrl._resolve_run_system(20.0, 21.0) == ""

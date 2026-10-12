@@ -42,6 +42,7 @@ from ..const import (
     is_override_active,
     make_roommind_context,
 )
+from ..managers.heat_source_orchestrator import evaluate_heat_sources
 from ..utils.device_utils import (
     DEFAULT_IDLE_SETBACK_OFFSET,
     IDLE_ACTION_FAN_ONLY,
@@ -1076,6 +1077,7 @@ class MPCController:
         shading_factor: float = 1.0,
         q_occupancy: float = 0.0,
         q_rebound: float | None = None,
+        previous_heat_sources: str = "none",
     ) -> None:
         self.hass = hass
         self.room_config = room_config
@@ -1100,6 +1102,9 @@ class MPCController:
         self._cloud_series = cloud_series or []
         self.q_residual = q_residual
         self._heating_system_type = heating_system_type
+        # Heating system whose run rules apply this cycle (see _resolve_run_system)
+        self._run_system = heating_system_type
+        self._previous_heat_sources = previous_heat_sources
         self._mode_on_since = mode_on_since
         self._shading_factor = shading_factor
         self.q_occupancy = q_occupancy
@@ -1201,9 +1206,46 @@ class MPCController:
         if self.previous_mode != mode or self._mode_on_since is None:
             return False
         # Cooling always runs on an AC; the UFH profile of a hybrid room is not its run time.
-        system = self._heating_system_type if mode == MODE_HEATING else ""
+        system = self._run_system if mode == MODE_HEATING else ""
         min_run_seconds = get_min_run_blocks(system, PLAN_DT_MINUTES) * PLAN_DT_MINUTES * 60
         return (time.time() - self._mode_on_since) < min_run_seconds
+
+    def _resolve_run_system(self, current_temp: float | None, heat_target: float | None) -> str:
+        """Heating system whose run rules (min run, drift pre-heat, no start hysteresis) apply.
+
+        Heat source orchestration closes a small gap with the AC alone; the UFH rules of
+        the room would then hold that AC for 30 min and let it pre-heat on a predicted
+        drift. Asks the orchestrator which sources a heating run would use now (with its
+        hysteresis on the sources of the running run) and falls back to the running
+        sources when it has no answer (room at the target).
+        """
+        system = self._heating_system_type
+        if (
+            system
+            and self.room_config.get("heat_source_orchestration", False)
+            and self.has_external_sensor
+            and self.thermostats
+            and self.acs
+        ):
+            plan = evaluate_heat_sources(
+                room_config=self.room_config,
+                mode=MODE_HEATING,
+                power_fraction=1.0,
+                current_temp=current_temp,
+                target_temp=heat_target,
+                outdoor_temp=self.outdoor_temp,
+                previous_active_sources=self._previous_heat_sources,
+                hass=self.hass,
+            )
+            sources = (
+                plan.active_sources
+                if plan is not None and plan.active_sources != "none"
+                else self._previous_heat_sources
+            )
+            if sources == "secondary":
+                system = ""
+        self._run_system = system
+        return system
 
     def _predict_idle_drift(self, current_temp: float, dt_minutes: float) -> float:
         """Predict room temperature assuming no active HVAC over *dt_minutes*.
@@ -1283,7 +1325,8 @@ class MPCController:
             heat_target_series = [fallback_h] * horizon_blocks
             cool_target_series = [fallback_c] * horizon_blocks
 
-        min_run = get_min_run_blocks(self._heating_system_type, PLAN_DT_MINUTES)
+        run_system = self._resolve_run_system(current_temp, targets.heat)
+        min_run = get_min_run_blocks(run_system, PLAN_DT_MINUTES)
 
         optimizer = MPCOptimizer(
             model=model,
@@ -1296,7 +1339,7 @@ class MPCController:
             min_run_blocks=min_run,
             cool_min_run_blocks=get_min_run_blocks("", PLAN_DT_MINUTES),
             override_active=is_override_active(self.room_config),
-            heating_system_type=self._heating_system_type,
+            heating_system_type=run_system,
             approach_rate=self._approach_rate,
             start_penalty=slow_start_penalty(min_run, PLAN_DT_MINUTES),
         )
@@ -1391,6 +1434,7 @@ class MPCController:
         if current_temp is None:
             return MODE_IDLE
 
+        self._resolve_run_system(current_temp, targets.heat)
         can_heat, can_cool = self._get_can_heat_cool()
         heat_target = targets.heat
         cool_target = targets.cool

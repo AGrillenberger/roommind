@@ -532,3 +532,26 @@ class TestHeatSourceOrchestration:
         assert room_state["mode"] == MODE_IDLE, (
             "cool_only room with blocked AC should be IDLE even when a TRV is present"
         )
+
+
+def _cmd(eid: str, device_type: str, active: bool, pf: float):
+    from custom_components.roommind.managers.heat_source_orchestrator import DeviceCommand
+
+    return DeviceCommand(eid, "primary", device_type, active, pf, "")
+
+
+def test_training_power_counts_only_heating_devices():
+    """A parked TRV next to an AC heating alone must not halve the power the EKF sees."""
+    from custom_components.roommind.coordinator import _orchestrated_training_power
+    from custom_components.roommind.managers.heat_source_orchestrator import HeatSourcePlan
+
+    ac_only = HeatSourcePlan(
+        [_cmd("climate.trv", "thermostat", False, 0.0), _cmd("climate.ac", "ac", True, 0.6)], "secondary", ""
+    )
+    both = HeatSourcePlan(
+        [_cmd("climate.trv", "thermostat", True, 0.8), _cmd("climate.ac", "ac", True, 0.4)], "both", ""
+    )
+    none = HeatSourcePlan([_cmd("climate.trv", "thermostat", False, 0.0)], "none", "")
+    assert _orchestrated_training_power(ac_only) == 0.6
+    assert _orchestrated_training_power(both) == pytest.approx(0.6)
+    assert _orchestrated_training_power(none) == 0.0
