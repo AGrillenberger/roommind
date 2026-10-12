@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from datetime import UTC
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -3110,3 +3111,37 @@ async def test_override_preset_resolves_to_band_per_climate_mode(
 
     room = store.get_room("bed")
     assert (room["override_heat"], room["override_cool"]) == expected
+
+
+@pytest.mark.asyncio
+async def test_analytics_model_reports_solar_gain_now_and_today(ws_hass, store, connection):
+    """Q_solar is a full-sun value; the panel also gets the current and today's clear-sky effect."""
+    await store.async_load()
+    await store.async_save_room("room_a", {"thermostats": ["climate.trv1"]})
+
+    est = _make_mock_estimator(model_dict={"Q_heat": 3.0, "Q_solar": 2.0, "Q_occupancy": 0.3})
+    est.get_model.return_value.Q_solar = 2.0
+    coordinator = _make_analytics_coordinator(
+        history_rows=[], estimator=est, rooms_live={"room_a": {"shading_factor": 0.5}}
+    )
+    coordinator._current_q_solar = 0.4
+    ws_hass.data[DOMAIN]["coordinator"] = coordinator
+
+    msg = {"id": 62, "type": "roommind/analytics/get", "area_id": "room_a"}
+    with patch("custom_components.roommind.services.analytics_service.clear_sky_peak_today", return_value=0.3):
+        await _get_analytics(ws_hass, connection, msg)
+
+    model = connection.send_result.call_args[0][1]["model"]
+    assert model["solar_gain_now"] == pytest.approx(0.4)
+    assert model["solar_gain_today_max"] == pytest.approx(0.6)
+
+
+def test_clear_sky_peak_today_follows_the_season():
+    from datetime import datetime
+
+    from custom_components.roommind.services.analytics_service import clear_sky_peak_today
+
+    summer = clear_sky_peak_today(52.5, 13.4, datetime(2026, 6, 21, 9, tzinfo=UTC).timestamp())
+    winter = clear_sky_peak_today(52.5, 13.4, datetime(2026, 1, 12, 9, tzinfo=UTC).timestamp())
+    assert 0.7 < summer < 1.0
+    assert winter < 0.4 * summer

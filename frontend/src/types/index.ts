@@ -279,6 +279,7 @@ export interface AnalyticsData {
       Q_cool: number;
       Q_solar: number;
       Q_occupancy: number;
+      Q_fast?: number;
     };
     n_samples: number;
     n_observations: number;
@@ -290,6 +291,8 @@ export interface AnalyticsData {
     prediction_std_idle: number;
     prediction_std_heating: number;
     has_occupancy_sensors: boolean;
+    solar_gain_now?: number;
+    solar_gain_today_max?: number;
   };
 }
 

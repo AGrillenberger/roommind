@@ -8,6 +8,7 @@ import time
 from typing import Any, cast
 
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from ..const import (
     CLIMATE_MODE_COOL_ONLY,
@@ -23,8 +24,20 @@ from ..control.mpc_controller import (
     get_can_heat_cool,
     is_mpc_active,
 )
+from ..control.solar import compute_q_solar_norm
 
 _LOGGER = logging.getLogger(__name__)
+
+SOLAR_PEAK_STEP_S = 600
+
+
+def clear_sky_peak_today(latitude: float, longitude: float, now: float) -> float:
+    """Highest clear-sky q_solar (GHI/1000) of the local calendar day containing *now*."""
+    start = dt_util.start_of_local_day(dt_util.utc_from_timestamp(now)).timestamp()
+    return max(
+        compute_q_solar_norm(latitude, longitude, start + i * SOLAR_PEAK_STEP_S)
+        for i in range(86400 // SOLAR_PEAK_STEP_S)
+    )
 
 
 def _safe_float(value: str) -> float | None:
@@ -251,6 +264,17 @@ async def build_analytics_data(
                 "prediction_std_idle": round(pred_std_idle, 4),
                 "prediction_std_heating": round(pred_std_heat, 4),
                 "has_occupancy_sensors": has_occupancy_sensors,
+                # Q_solar is the gain at full sun (1000 W/m²); these are what it means now and today
+                "solar_gain_now": round(
+                    rc.Q_solar
+                    * coordinator._current_q_solar
+                    * coordinator.rooms.get(area_id, {}).get("shading_factor", 1.0),
+                    3,
+                ),
+                "solar_gain_today_max": round(
+                    rc.Q_solar * clear_sky_peak_today(hass.config.latitude, hass.config.longitude, time.time()),
+                    3,
+                ),
             }
 
     # Build merged forecast: same format as history points, on a shared 5-min grid
