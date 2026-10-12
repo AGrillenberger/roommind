@@ -50,6 +50,7 @@ from ..utils.device_utils import (
     IDLE_ACTION_OFF,
     IDLE_ACTION_SETBACK,
     get_ac_eids,
+    get_all_entity_ids,
     get_direct_setpoint_eids,
     get_idle_action,
     get_setpoint_offset,
@@ -1014,6 +1015,35 @@ def decide_mpc_action(
     ):
         return MODE_COOLING, continuation_power(MODE_COOLING, cool_now)
     return action, power_fraction
+
+
+def infer_running_mode(hass: HomeAssistant, room_config: dict) -> str:
+    """Mode the room's devices run in right now, to seed the controller after a start.
+
+    The previous mode lives in memory only: after a reload or restart a run inside the
+    start hysteresis band (20.9 at a 21 target) would read as "idle" and be switched off
+    once. A device counts when it reports ``hvac_action`` heating/cooling, unless the last
+    command RoomMind sent it (kept across an integration reload) switched it off, which
+    marks a manual switch-on. Devices disagreeing on the direction seed nothing.
+    """
+    heating = cooling = False
+    for eid in get_all_entity_ids(room_config.get("devices", [])):
+        state = hass.states.get(eid)
+        if state is None:
+            continue
+        last = _last_commands.get(eid)
+        if last is not None and last.get("hvac_mode") == "off":
+            continue
+        action = state.attributes.get("hvac_action")
+        if action in ("heating", "preheating"):
+            heating = True
+        elif action == "cooling":
+            cooling = True
+    if heating and not cooling:
+        return MODE_HEATING
+    if cooling and not heating:
+        return MODE_COOLING
+    return MODE_IDLE
 
 
 def is_mpc_enabled(settings: dict | None) -> bool:

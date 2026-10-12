@@ -54,6 +54,7 @@ from .control.mpc_controller import (
     MPCController,
     check_acs_can_heat,
     get_can_heat_cool,
+    infer_running_mode,
     is_mpc_active,
 )
 from .control.residual_heat import mean_rebound
@@ -202,6 +203,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._entity_areas: set[str] = set()
         # Min-run enforcement: timestamp when current non-idle mode started
         self._mode_on_since: dict[str, float] = {}
+        # Rooms whose previous mode no longer needs seeding from the devices (see infer_running_mode)
+        self._mode_seeded: set[str] = set()
         # Sensor dropout fallback: last valid temperature per room
         self._last_valid_temps: dict[str, tuple[float, float]] = {}  # {area_id: (celsius, monotonic_ts)}
         # Startup guard: rooms with at least one valid temperature reading since
@@ -721,6 +724,20 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             mold_prevention_delta=mold_prevention_temp_delta,
         )
 
+        # After a reload or restart the previous mode is unknown; seed it from what the
+        # devices are doing until a cycle has actually controlled the room. The run's
+        # start is unknown too: it counts as started now, so a run that began just
+        # before the restart still gets its minimum run (at most one extra min run).
+        if (
+            has_external_sensor
+            and area_id not in self._mode_seeded
+            and self._previous_modes.get(area_id, MODE_IDLE) == MODE_IDLE
+        ):
+            seeded = infer_running_mode(self.hass, room)
+            if seeded != MODE_IDLE:
+                self._previous_modes[area_id] = seeded
+                self._mode_on_since[area_id] = time.time()
+
         # --- Compute residual heat from previous cycle state ---
         system_type = room.get("heating_system_type", "")
         q_residual = self._residual_tracker.get_q_residual(
@@ -1000,6 +1017,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 area_id,
             )
         else:
+            self._mode_seeded.add(area_id)
             try:
                 await controller.async_apply(
                     mode,
@@ -1955,6 +1973,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._cover_orchestrator.remove_room(area_id)
         self._entity_areas.discard(area_id)
         self._mode_on_since.pop(area_id, None)
+        self._mode_seeded.discard(area_id)
         self._switch_entity_areas.discard(area_id)
         self._climate_control_switch_areas.discard(area_id)
         self._binary_sensor_entity_areas.discard(area_id)
