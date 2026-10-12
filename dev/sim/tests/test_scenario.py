@@ -137,6 +137,10 @@ def test_deep_merge_appends_with_plus():
     assert deep_merge({"q": [1], "a": {"b": 1}}, {"q+": [2], "a": {"c": 2}}) == {"q": [1, 2], "a": {"b": 1, "c": 2}}
 
 
+def test_deep_merge_removes_with_minus():
+    assert deep_merge({"a": {"b": 1, "c": 2}}, {"a": {"c-": None, "d": 3}}) == {"a": {"b": 1, "d": 3}}
+
+
 def test_all_device_profiles_load():
     from roommind_sim.scenario.loader import PROFILE_DIR, load_profile
 

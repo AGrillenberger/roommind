@@ -103,6 +103,7 @@ async def _compute_target_forecast(
     """
     from ..utils.presence_utils import is_presence_away
     from ..utils.schedule_utils import (
+        cap_cool_only_heat,
         get_active_schedule_entity,
         read_schedule_blocks,
         resolve_targets_at_time,
@@ -160,6 +161,7 @@ async def _compute_target_forecast(
             heat_target = round(heat_target + mold_prevention_delta, 1)
         elif mold_prevention_delta > 0:
             heat_target = round(eco_heat + mold_prevention_delta, 1)
+        heat_target, cool_target = cap_cool_only_heat(heat_target, cool_target, climate_mode)
 
         # Chart display: mode-aware single value
         if climate_mode == CLIMATE_MODE_COOL_ONLY:

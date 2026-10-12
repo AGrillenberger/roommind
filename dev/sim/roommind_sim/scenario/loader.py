@@ -60,10 +60,12 @@ ACTIONS: dict[str, set[str]] = {
 
 
 def deep_merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
-    """Merge ``over`` into a copy of ``base``; ``key+`` appends to a list."""
+    """Merge ``over`` into a copy of ``base``; ``key+`` appends to a list, ``key-`` removes the key."""
     out = copy.deepcopy(base)
     for key, value in over.items():
-        if key.endswith("+"):
+        if key.endswith("-"):
+            out.pop(key[:-1], None)
+        elif key.endswith("+"):
             real = key[:-1]
             out[real] = list(out.get(real, [])) + list(value)
         elif isinstance(value, dict) and isinstance(out.get(key), dict):
