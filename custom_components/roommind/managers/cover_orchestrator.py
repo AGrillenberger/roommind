@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ..const import (
+    CLIMATE_MODE_HEAT_ONLY,
     COVER_CONFIDENCE_REFERENCE_SOLAR,
+    COVER_COOLING_LOOKAHEAD_H,
     COVER_DAILY_LOOKAHEAD_H,
     COVER_DEFAULT_BETA_S,
     COVER_LINEAR_LOOKAHEAD_H,
     COVER_MAX_PREDICTION_STD,
     COVER_MIN_IDLE_FOR_LEARNED,
     COVER_PREDICTION_DT_MINUTES,
+    COVER_SMOOTHING_MINUTES,
+    COVER_SMOOTHING_RISE_MINUTES,
     COVER_SOLAR_MIN,
     DEFAULT_COMFORT_COOL,
     MODE_COOLING,
@@ -27,6 +32,7 @@ from ..control.solar import (
     solar_elevation,
     surface_irradiance_factor,
 )
+from ..utils.device_utils import get_ac_eids
 from ..utils.schedule_utils import resolve_schedule_index
 from .cover_manager import _SUPPORT_SET_POSITION, CoverDecision, CoverManager, compute_shading_factor
 
@@ -68,6 +74,9 @@ class CoverOrchestrator:
         self._cover_manager = cover_manager
         self._model_manager = model_manager
         self._cloud_series: list[float | None] | None = None
+        # (value, timestamp) per room; see _smooth()
+        self._smoothed_temp: dict[str, tuple[float, float]] = {}
+        self._smoothed_excess: dict[str, tuple[float, float]] = {}
 
     def set_model_manager(self, model_manager: RoomModelManager) -> None:
         """Update the model manager reference (used after full thermal reset)."""
@@ -130,14 +139,19 @@ class CoverOrchestrator:
             )
 
         # Block B: Cover target
-        # Shading attenuates solar gain, so it protects an upper bound. Outside
-        # active cooling there is no cooling setpoint to aim at, and comparing
+        # Shading attenuates solar gain, so it protects an upper bound. A room
+        # that can cool aims at its cooling setpoint whether or not the AC runs
+        # right now, otherwise the target would follow every compressor cycle.
+        # Without cooling there is no cooling setpoint to aim at, and comparing
         # against targets.heat deployed ~3 C too early (#418) — in heat_only
         # rooms permanently, since MODE_COOLING is unreachable there.
         # targets.heat stays in the max() as a floor: a comfort_cool below the
         # heating setpoint must not shade harder than before.
         comfort_cool = room.get("comfort_cool", DEFAULT_COMFORT_COOL)
-        if mode == MODE_COOLING and targets.cool is not None:
+        can_cool = room.get("climate_mode", "auto") != CLIMATE_MODE_HEAT_ONLY and bool(
+            get_ac_eids(room.get("devices", []))
+        )
+        if targets.cool is not None and (can_cool or mode == MODE_COOLING):
             cover_target = targets.cool
         else:
             cover_target = max([comfort_cool, *(t for t in (targets.cool, targets.heat) if t is not None)])
@@ -223,11 +237,51 @@ class CoverOrchestrator:
             _factors = [surface_irradiance_factor(_sun_az, _sun_el, az) for az in _surface_azimuths]
             _oriented_q_solar = q_solar * (sum(_factors) / len(_factors))
 
-        _cover_predicted_peak = predicted_peak_temp
-        if _cover_predicted_peak is None:
-            _cover_predicted_peak = self._estimate_solar_peak_temp(
-                area_id, current_temp, cover_target, q_solar, outdoor_temp, _surface_azimuths
+        now = time.time()
+        smoothed_temp = self._smooth_temp(area_id, current_temp, now)
+        if can_cool:
+            # Shade first, cool the rest: decide on the overshoot the sun alone
+            # would cause, so a unit that could hold the room no longer keeps the
+            # blind up. Same function in MPC and Simple mode; the MPC plan
+            # (cooling included) adds the unit too weak to hold the room. Room
+            # temperature, plan peak and learned solar gain all swing with the
+            # compressor cycle, so base temperature and excess are smoothed.
+            raw_peak = self._estimate_solar_load_peak(
+                area_id, smoothed_temp, cover_target, q_solar, outdoor_temp, _surface_azimuths
             )
+            if predicted_peak_temp is not None:
+                raw_peak = max(raw_peak, predicted_peak_temp)
+            excess = self._smooth(
+                self._smoothed_excess,
+                area_id,
+                raw_peak - cover_target,
+                now,
+                rise_minutes=COVER_SMOOTHING_RISE_MINUTES,
+            )
+            _cover_predicted_peak = cover_target + excess
+            _LOGGER.debug(
+                "Cover input [%s]: target %.2f, smoothed temp %s, raw peak %.2f, plan peak %s, excess %.2f",
+                area_id,
+                cover_target,
+                smoothed_temp,
+                raw_peak,
+                predicted_peak_temp,
+                excess,
+            )
+        else:
+            # Without cooling the question is whether the room overheats from
+            # where it is now (#418): plan peak, or the free-running estimate.
+            self._smoothed_excess.pop(area_id, None)
+            if predicted_peak_temp is not None:
+                _cover_predicted_peak = predicted_peak_temp
+            else:
+                _cover_predicted_peak = self._estimate_solar_peak_temp(
+                    area_id, current_temp, cover_target, q_solar, outdoor_temp, _surface_azimuths
+                )
+
+        # Heating demand: solar gain is welcome, never shade against it.
+        if targets.heat is not None and smoothed_temp is not None and smoothed_temp < targets.heat:
+            _cover_predicted_peak = cover_target
 
         if _oriented_q_solar < COVER_SOLAR_MIN and _surface_azimuths:
             _cover_predicted_peak = cover_target
@@ -312,22 +366,6 @@ class CoverOrchestrator:
             deployment for southern sunlight.
         """
         base_temp = current_temp if current_temp is not None else target_temp
-        lat = self.hass.config.latitude
-        lon = self.hass.config.longitude
-
-        def _solar_series(n_steps: int) -> list[float]:
-            if surface_azimuths:
-                return build_oriented_solar_series(
-                    lat,
-                    lon,
-                    n_steps,
-                    surface_azimuths,
-                    dt_minutes=COVER_PREDICTION_DT_MINUTES,
-                    cloud_series=self._cloud_series,
-                )
-            return build_solar_series(
-                lat, lon, n_steps, dt_minutes=COVER_PREDICTION_DT_MINUTES, cloud_series=self._cloud_series
-            )
 
         try:
             n_idle, _, _ = self._model_manager.get_mode_counts(area_id)
@@ -339,7 +377,7 @@ class CoverOrchestrator:
                 # Tier 1: RC model trajectory with proper physics
                 model = self._model_manager.get_model(area_id)
                 n_steps = int(COVER_DAILY_LOOKAHEAD_H * 60 / COVER_PREDICTION_DT_MINUTES)
-                solar_series = _solar_series(n_steps)
+                solar_series = self._solar_series(n_steps, surface_azimuths)
                 trajectory = model.predict_trajectory(
                     base_temp,
                     [outdoor_temp] * n_steps,
@@ -355,9 +393,116 @@ class CoverOrchestrator:
         # Using the daily peak (instead of current q_solar) means the initial position is computed
         # from the afternoon maximum — one decisive deployment rather than incremental steps as q_solar rises.
         n_daily = int(COVER_DAILY_LOOKAHEAD_H * 60 / COVER_PREDICTION_DT_MINUTES)
-        daily_series = _solar_series(n_daily)
+        daily_series = self._solar_series(n_daily, surface_azimuths)
         q_solar_peak = max(daily_series) if daily_series else q_solar
         return base_temp + COVER_DEFAULT_BETA_S * q_solar_peak * COVER_LINEAR_LOOKAHEAD_H
+
+    def _estimate_solar_load_peak(
+        self,
+        area_id: str,
+        current_temp: float | None,
+        target_temp: float,
+        q_solar: float,
+        outdoor_temp: float | None,
+        surface_azimuths: list[float] | None = None,
+    ) -> float:
+        """Peak temperature the sun alone would cause in a room that can cool.
+
+        Starts at ``min(current_temp, target_temp)``: above the target the unit
+        holds or should hold the room, and the question is only what the sun
+        adds from there. Heat the room would gain without sun (a hot outdoor
+        temperature) is not counted above the target, shading cannot stop it:
+        peak = max_t [T_sun(t) - max(0, T_nosun(t) - target)].
+
+        Linear estimate from the daily solar peak with the default gain over
+        ``COVER_COOLING_LOOKAHEAD_H`` (the unit removes all solar heat, none is
+        lost through the envelope), raised by the RC model trajectories with
+        and without sun when the idle model is confident. The linear estimate
+        is the floor: in an AC room the learned solar gain swings with every
+        compressor cycle and falls towards zero while cooling holds the room.
+        """
+        base_temp = min(current_temp, target_temp) if current_temp is not None else target_temp
+        n_steps = int(COVER_DAILY_LOOKAHEAD_H * 60 / COVER_PREDICTION_DT_MINUTES)
+        solar_series = self._solar_series(n_steps, surface_azimuths)
+        q_solar_peak = max(solar_series) if solar_series else q_solar
+        linear_peak = base_temp + COVER_DEFAULT_BETA_S * q_solar_peak * COVER_COOLING_LOOKAHEAD_H
+
+        try:
+            n_idle, _, _ = self._model_manager.get_mode_counts(area_id)
+            if (
+                solar_series
+                and n_idle >= COVER_MIN_IDLE_FOR_LEARNED
+                and outdoor_temp is not None
+                and self._idle_solar_model_confident(area_id, base_temp, outdoor_temp)
+            ):
+                model = self._model_manager.get_model(area_id)
+                outdoor_series = [outdoor_temp] * len(solar_series)
+                idle_series = [0.0] * len(solar_series)
+                with_sun = model.predict_trajectory(
+                    base_temp,
+                    outdoor_series,
+                    idle_series,
+                    COVER_PREDICTION_DT_MINUTES,
+                    q_solar_series=solar_series,
+                )
+                without_sun = model.predict_trajectory(
+                    base_temp, outdoor_series, idle_series, COVER_PREDICTION_DT_MINUTES
+                )
+                model_peak = max(
+                    t_sun - max(0.0, t_dark - target_temp) for t_sun, t_dark in zip(with_sun, without_sun, strict=False)
+                )
+                return max(model_peak, linear_peak)
+        except Exception:  # noqa: BLE001
+            pass
+        return linear_peak
+
+    def _solar_series(self, n_steps: int, surface_azimuths: list[float] | None) -> list[float]:
+        """Unshaded solar series for the cover lookahead, oriented when azimuths are known."""
+        lat = self.hass.config.latitude
+        lon = self.hass.config.longitude
+        if surface_azimuths:
+            return build_oriented_solar_series(
+                lat,
+                lon,
+                n_steps,
+                surface_azimuths,
+                dt_minutes=COVER_PREDICTION_DT_MINUTES,
+                cloud_series=self._cloud_series,
+            )
+        return build_solar_series(
+            lat, lon, n_steps, dt_minutes=COVER_PREDICTION_DT_MINUTES, cloud_series=self._cloud_series
+        )
+
+    def _smooth_temp(self, area_id: str, current_temp: float | None, now: float) -> float | None:
+        if current_temp is None:
+            self._smoothed_temp.pop(area_id, None)
+            return None
+        return self._smooth(self._smoothed_temp, area_id, current_temp, now)
+
+    @staticmethod
+    def _smooth(
+        store: dict[str, tuple[float, float]],
+        area_id: str,
+        value: float,
+        now: float,
+        rise_minutes: float = COVER_SMOOTHING_MINUTES,
+    ) -> float:
+        """Time-based EMA so a compressor cycle does not reach the cover decision.
+
+        *rise_minutes* sets the time constant while the value climbs; a shorter
+        one lets a growing excess deploy in one move instead of a staircase.
+        """
+        prev = store.get(area_id)
+        if prev is None:
+            store[area_id] = (value, now)
+            return value
+        if now <= prev[1]:
+            return prev[0]
+        tau = rise_minutes if value > prev[0] else COVER_SMOOTHING_MINUTES
+        weight = 1.0 - math.exp(-(now - prev[1]) / (tau * 60.0))
+        smoothed = prev[0] + (value - prev[0]) * weight
+        store[area_id] = (smoothed, now)
+        return smoothed
 
     def _idle_solar_model_confident(self, area_id: str, T_room: float, T_outdoor: float) -> bool:
         """Check if idle model with solar is confident enough for trajectory prediction.
@@ -396,5 +541,7 @@ class CoverOrchestrator:
         self._cover_manager.clear_user_override(area_id)
 
     def remove_room(self, area_id: str) -> None:
-        """Delegate to CoverManager.remove_room."""
+        """Drop per-room smoothing state and delegate to CoverManager.remove_room."""
+        self._smoothed_temp.pop(area_id, None)
+        self._smoothed_excess.pop(area_id, None)
         self._cover_manager.remove_room(area_id)

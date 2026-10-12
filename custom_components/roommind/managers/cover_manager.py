@@ -14,6 +14,8 @@ from ..const import (
     COVER_MIN_HOLD_SECONDS,
     COVER_POS_DEADBAND,
     COVER_POS_SCALE,
+    COVER_REOPEN_HOLD_SECONDS,
+    COVER_REOPEN_STEP,
     COVER_SOLAR_MIN,
     COVER_TRANSITION_SETTLE_S,
     COVER_USER_CONFLICT_THRESHOLD,
@@ -266,6 +268,17 @@ class CoverManager:
 
         if not hold_time_ok:
             return CoverDecision(target_position=current, changed=False, reason="min_hold_time")
+
+        # Partial reopening inside an episode follows the slowly falling afternoon
+        # excess; in 20 % steps that was a move every 15 min. The full retract
+        # below the hysteresis band is not affected.
+        reopen_ceiling = state.baseline_position if state.baseline_position is not None else 100
+        if (
+            not was_forced
+            and current < desired_pos < reopen_ceiling
+            and (desired_pos - current < COVER_REOPEN_STEP or now - state.last_change_ts < COVER_REOPEN_HOLD_SECONDS)
+        ):
+            return CoverDecision(target_position=current, changed=False, reason="reopen_hold")
 
         if abs(desired_pos - current) <= COVER_POS_DEADBAND:
             return CoverDecision(target_position=current, changed=False, reason="deadband")

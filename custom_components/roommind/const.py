@@ -177,12 +177,17 @@ COVER_USER_OVERRIDE_MINUTES: int = 60
 COVER_TRANSITION_SETTLE_S: int = 90  # seconds after commanding before override detection activates
 COVER_DEFAULT_BETA_S: float = 3.0  # °C/h per unit q_solar (default for rooms without learned data)
 COVER_LINEAR_LOOKAHEAD_H: float = 1.0  # linear fallback: 1h (no heat-loss correction → keep short)
+COVER_COOLING_LOOKAHEAD_H: float = 2.0  # linear estimate in rooms that cool: the unit removes all solar heat
 COVER_PREDICTION_DT_MINUTES: float = 5.0  # time step for RC trajectory simulation
 COVER_MAX_PREDICTION_STD: float = 0.5  # max idle+solar prediction_std to activate RC tier
 COVER_CONFIDENCE_REFERENCE_SOLAR: float = 0.5  # reference q_solar for confidence check
 COVER_MIN_IDLE_FOR_LEARNED: int = 30  # Min idle observations before trusting EKF's beta_s
 COVER_POS_DEADBAND: int = 20  # min position change (%) to trigger motor movement
+COVER_REOPEN_STEP: int = 40  # min partial reopening (%) within a shading episode
+COVER_REOPEN_HOLD_SECONDS: int = 3600  # min time since the last move before a partial reopening
 COVER_DAILY_LOOKAHEAD_H: float = 8.0  # hours ahead to search for daily solar peak (Tier 2)
+COVER_SMOOTHING_MINUTES: float = 30.0  # EMA time constant for room temp and shading excess (AC cycles)
+COVER_SMOOTHING_RISE_MINUTES: float = 10.0  # faster EMA while the shading excess climbs
 
 # Heat source orchestration — smart routing for rooms with multiple heating device types
 DEFAULT_HEAT_SOURCE_PRIMARY_DELTA = 1.5  # °C gap to engage primary (boiler/radiator)
