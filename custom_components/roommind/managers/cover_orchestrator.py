@@ -285,8 +285,14 @@ class CoverOrchestrator:
                     area_id, current_temp, cover_target, q_solar, outdoor_temp, _surface_azimuths
                 )
 
-        # Heating demand: solar gain is welcome, never shade against it.
-        if targets.heat is not None and smoothed_temp is not None and smoothed_temp < targets.heat:
+        # Heating demand: solar gain is welcome, never shade against it. A cool_only
+        # room has no heating demand, its heat side is only the band floor.
+        if (
+            room.get("climate_mode") != "cool_only"
+            and targets.heat is not None
+            and smoothed_temp is not None
+            and smoothed_temp < targets.heat
+        ):
             _cover_predicted_peak = cover_target
 
         if _oriented_q_solar < COVER_SOLAR_MIN and _surface_azimuths:

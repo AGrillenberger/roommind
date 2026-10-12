@@ -1837,6 +1837,20 @@ class TestShadeBeforeCooling:
         assert cm.evaluate.call_args[1]["predicted_peak_temp"] == 24.5
 
     @pytest.mark.asyncio
+    async def test_cool_only_room_shades_below_its_band_floor(self):
+        """A cool_only room's heat side is a band floor, not heating demand (legacy heat == cool)."""
+        cm = _make_cover_manager()
+        orch = CoverOrchestrator(_make_hass(), cm, _make_model_manager())
+        with patch.object(CoverOrchestrator, "_estimate_solar_load_peak", return_value=28.0):
+            await _process(
+                orch,
+                _ac_room(climate_mode="cool_only"),
+                current_temp=23.0,
+                targets=TargetTemps(heat=24.5, cool=24.5),
+            )
+        assert cm.evaluate.call_args[1]["predicted_peak_temp"] > 24.5
+
+    @pytest.mark.asyncio
     async def test_excess_rises_fast_and_falls_slowly(self):
         cm = _make_cover_manager()
         orch = CoverOrchestrator(_make_hass(), cm, _make_model_manager())
