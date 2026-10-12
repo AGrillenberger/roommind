@@ -293,7 +293,7 @@
   "covers.info.entities_title": "Entités HA",
   "covers.info.entities_body": "RoomMind crée deux entités par pièce pour une utilisation externe: switch.roommind_{area}_cover_auto (activer/désactiver le contrôle automatique des stores — utilisable dans les automatisations ou tableaux de bord) et binary_sensor.roommind_{area}_cover_paused (activé lorsque la dérogation manuelle est en cours, ex. après un déplacement manuel d'un store).",
   "covers.orientation_group_title": "Orientation du store",
-  "covers.orientation_hint": "Définissez la direction cardinale vers laquelle chaque store fait face. RoomMind utilise cela pour ignorer le déploiement solaire lorsque le soleil n'éclaire pas ce côté du bâtiment.",
+  "covers.orientation_hint": "Définissez la direction cardinale vers laquelle chaque store fait face. RoomMind n'ombrage alors que lorsque le soleil éclaire réellement ce côté du bâtiment. Sans direction, les stores réagissent à l'ensoleillement en général et peuvent se fermer dès le lever du soleil, même sur une fenêtre au nord.",
   "covers.orientation_none": "Pas de direction",
   "covers.orientation_N": "N",
   "covers.orientation_NE": "NE",

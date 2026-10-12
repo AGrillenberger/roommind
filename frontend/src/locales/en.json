@@ -293,7 +293,7 @@
   "covers.info.entities_title": "HA entities",
   "covers.info.entities_body": "RoomMind creates two entities per room for external use: switch.roommind_{area}_cover_auto (enable/disable automatic cover control — usable in automations or dashboards) and binary_sensor.roommind_{area}_cover_paused (on when manual override is active, e.g. after manually moving a cover).",
   "covers.orientation_group_title": "Cover orientation",
-  "covers.orientation_hint": "Set the compass direction each cover faces. RoomMind uses this to skip solar deployment when the sun is not shining on that side of the building.",
+  "covers.orientation_hint": "Set the compass direction each cover faces. RoomMind then shades only while the sun is actually on that side of the building. Without a direction, covers react to sunshine in general and may close from sunrise, even on a north window.",
   "covers.orientation_none": "Any direction",
   "covers.orientation_N": "N",
   "covers.orientation_NE": "NE",

@@ -293,7 +293,7 @@
   "covers.info.entities_title": "HA-Entitäten",
   "covers.info.entities_body": "RoomMind erstellt zwei Entitäten pro Raum zur externen Nutzung: switch.roommind_{bereich}_cover_auto (automatische Rollosteuerung ein-/ausschalten — nutzbar in Automatisierungen oder Dashboards) und binary_sensor.roommind_{bereich}_cover_paused (an wenn manuelles Override aktiv ist, z.B. nach manuellem Bewegen eines Rollos).",
   "covers.orientation_group_title": "Rolloausrichtung",
-  "covers.orientation_hint": "Himmelsrichtung, in die das Rollo zeigt. RoomMind nutzt dies, um Sonnenschutz zu überspringen, wenn die Sonne nicht auf diese Gebäudeseite scheint.",
+  "covers.orientation_hint": "Himmelsrichtung, in die das Rollo zeigt. RoomMind beschattet dann nur, solange die Sonne wirklich auf diese Gebäudeseite scheint. Ohne Richtung reagieren die Rollos auf Sonnenschein allgemein und können schon ab Sonnenaufgang schließen, auch an einem Nordfenster.",
   "covers.orientation_none": "Beliebige Richtung",
   "covers.orientation_N": "N",
   "covers.orientation_NE": "NO",
