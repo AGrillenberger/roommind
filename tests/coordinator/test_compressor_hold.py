@@ -128,6 +128,34 @@ class TestHoldKeepsSetpoint:
         assert modes == [MODE_HEATING, MODE_IDLE, MODE_HEATING, MODE_IDLE, MODE_HEATING]
         assert len(sent) == 1, f"setpoint pendulums: {sent}"
 
+    @pytest.mark.asyncio
+    async def test_overshooting_holds_throttle_once_each_and_boost_only_on_a_new_start(self, hass, mock_config_entry):
+        """heat_only room swinging 1.5 K past the target: one throttle per hold, the boost
+        returns only with a real heating start, never within a hold (#416/#436)."""
+        coordinator = await _setup(hass, mock_config_entry)
+        ac = {"state": _ac_state("off", 16.0)}
+        per_tick: list[list[float]] = []
+        modes = []
+        for temp in ("18.0", "22.5", "22.6", "20.5", "22.5", "22.4"):
+            _wire_states(hass, ac, temp=temp)
+            _age_mode(coordinator)
+            data = await coordinator._async_update_data()
+            modes.append(data["rooms"][AREA]["mode"])
+            values = [c[0][2]["temperature"] for c in _calls(hass, "set_temperature")]
+            per_tick.append(values)
+            if values:
+                ac["state"] = _ac_state("heat", values[-1])
+            hass.services.async_call.reset_mock()
+
+        assert modes == [MODE_HEATING, MODE_IDLE, MODE_IDLE, MODE_HEATING, MODE_IDLE, MODE_IDLE]
+        boost = per_tick[0][0]
+        assert per_tick[1] == [22.5]  # throttled to the unit's reading (no own sensor: the room)
+        assert per_tick[2] == []  # same hold: nothing more
+        assert per_tick[3] and per_tick[3][-1] > 22.5  # new heating start: boost again
+        assert per_tick[4] == [22.5]
+        assert per_tick[5] == []
+        assert boost > 22.5
+
 
 class TestHoldFollowsDeliberateTargetChange:
     """A target that changed on purpose reaches the unit during min-run, as before the hold (#436)."""
@@ -270,10 +298,10 @@ class TestHoldPastTheBand:
         ac["state"] = _ac_state("heat", boost)
 
         hass.services.async_call.reset_mock()
-        _wire_states(hass, ac, temp="21.4")
+        _wire_states(hass, ac, temp="21.8")
         _age_mode(coordinator)
         await coordinator._async_update_data()
-        assert _calls(hass, "set_temperature") == []  # within the margin: boost held
+        assert _calls(hass, "set_temperature") == []  # inside the band: boost held
 
         _wire_states(hass, ac, temp="22.6")
         data = await coordinator._async_update_data()

@@ -197,6 +197,13 @@ def test_hold_may_throttle_past_the_margin_but_not_below_the_target():
     assert len(min_run_hold_keeps_setpoint(_hold_run([20.0], current_temp=21.6))) == 1
 
 
+def test_hold_throttle_is_not_allowed_in_a_room_with_both_sides():
+    run = _hold_run([23.0], cool_target=24.0, climate_mode="auto", current_temp=21.6)
+    assert len(min_run_hold_keeps_setpoint(run)) == 1
+    run = _hold_run([23.0], cool_target=None, climate_mode="auto", current_temp=21.6)
+    assert min_run_hold_keeps_setpoint(run) == []
+
+
 def test_setpoint_drop_outside_the_hold_is_fine():
     run = _hold_run([21.0])
     for o in run.observer:

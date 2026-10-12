@@ -18,6 +18,6 @@ tags: [compressor, ac]
 expect:
   - {invariant: min_run_hold_keeps_setpoint}
   - {invariant: min_run_commanded}
-  - {metric: comfort.hold_heat_over_max_k, room: wohnzimmer, max: 2.0, label: held unit throttled to its own reading past target + 0.5 K (2.6 K before)}
+  - {metric: comfort.hold_heat_over_max_k, room: wohnzimmer, max: 2.0, label: held unit throttled to its own reading past target + 0.5 K (2.6 to 3.6 K before)}
   - {invariant: min_run_respected, known_failure: 'unit cycles on its own sensor: the hold keeps the last proportional setpoint, often target +1 K after a one-tick heat decision near the target, and the +1.5 K return-air bias reads that as reached'}
   - {metric: device.starts_per_day, entity_id: climate.wohnzimmer_ac, max: 30, known_failure: 'same cause as min_run_respected (unit cycles on its own sensor at a small held setpoint)'}

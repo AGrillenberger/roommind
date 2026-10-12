@@ -21,6 +21,7 @@ from custom_components.roommind.control.mpc_optimizer import MPCPlan
 from custom_components.roommind.control.thermal_model import RoomModelManager
 from custom_components.roommind.coordinator import RoomMindCoordinator
 from custom_components.roommind.managers.heat_source_orchestrator import DeviceCommand, HeatSourcePlan
+from custom_components.roommind.utils.schedule_utils import make_target_resolver
 
 from .conftest import build_hass, make_room
 
@@ -264,3 +265,24 @@ def test_orchestrated_display_shows_the_lead_target():
         plan, 19.2, 19.0, 30.0, 30.0, direct_eids={"climate.dev"}, direct_target=21.5
     )
     assert shown == 21.5
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("override_hours", "expected"), [(3.0, 17.0), (1.0, 21.5)])
+async def test_eco_override_is_not_overrun_by_the_comfort_target(monkeypatch, override_hours, expected):
+    """The real resolver keeps the override over the horizon: only its end inside the window is a lead."""
+    room = _room()
+    room.update(
+        comfort_heat=21.5,
+        override_heat=17.0,
+        override_cool=None,
+        override_type="eco",
+        override_until=time.time() + override_hours * 3600,
+    )
+    resolver = make_target_resolver(None, room, {})
+    hass, ctrl = _controller(room, resolver, monkeypatch=monkeypatch)
+
+    mode, _ = ctrl._evaluate_mpc(16.5, TargetTemps(17.0, None))
+    await ctrl.async_apply(mode, TargetTemps(17.0, None), power_fraction=0.8, current_temp=16.5)
+
+    assert _sent(hass) == [expected]

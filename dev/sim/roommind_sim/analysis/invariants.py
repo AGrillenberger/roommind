@@ -142,7 +142,8 @@ def min_run_hold_keeps_setpoint(run: RunData, tolerance_k: float = 0.05) -> list
     whose own sensor already reads the room as warm (cold) enough; in #436 the mode
     stayed "heat" while the compressor stopped. Allowed: the room target itself moved
     that way since the last active tick (eco override, vacation, schedule), the room
-    ran past the far side of its band (documented band-overshoot rule), or the room is
+    ran past the far side of its band (documented band-overshoot rule), or, in a room
+    without a far side (heat_only / cool_only or no target there), the room is
     ``HOLD_THROTTLE_MARGIN_K`` past the target and the new setpoint stays on the demand
     side of it (throttle to minimum instead of boosting on).
     """
@@ -186,7 +187,9 @@ def min_run_hold_keeps_setpoint(run: RunData, tolerance_k: float = 0.05) -> list
                 continue
         climate_mode = (rooms_cfg.get(area) or {}).get("climate_mode", "auto")
         cur = room.get("current_temp")
-        if cur is not None and now_t is not None:
+        far = room.get("cool_target") if heating else room.get("heat_target")
+        one_sided = far is None or climate_mode == ("heat_only" if heating else "cool_only")
+        if cur is not None and now_t is not None and one_sided:
             if heating and cur >= now_t + HOLD_THROTTLE_MARGIN_K - 1e-6 and new >= now_t - tolerance_k:
                 continue
             if cooling and cur <= now_t - HOLD_THROTTLE_MARGIN_K + 1e-6 and new <= now_t + tolerance_k:

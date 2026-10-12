@@ -256,21 +256,20 @@ async def test_single_point_target_needs_the_margin_before_the_cooling_hold_ends
 
 @pytest.mark.asyncio
 async def test_band_wider_than_the_margin_still_ends_at_the_cool_target():
-    """Past heat + margin the unit is throttled first; at the cool target it gets the plain target."""
     hass, ctrl = _setup(_state("heat"))
     band = TargetTemps(heat=21.0, cool=22.5)
-    calls = await _start_then_hold(hass, ctrl, band, current_temp=22.4, started_with=band)
-    assert [c["temperature"] for c in calls] == [22.5]
+    assert await _start_then_hold(hass, ctrl, band, current_temp=22.4, started_with=band) == []
     hass.services.async_call.reset_mock()
     await ctrl.async_apply(MODE_IDLE, band, current_temp=22.5, compressor_forced_on=HELD)
     assert [c["temperature"] for c in _sent(hass)] == [21.0]
 
 
 @pytest.mark.asyncio
-async def test_heating_hold_keeps_the_boost_up_to_the_margin():
-    hass, ctrl = _setup(_state("heat"))
+async def test_heating_hold_keeps_the_boost_inside_the_band():
+    """A room with both sides keeps the band rule: no throttle past heat + margin (#436 R2-M1)."""
+    hass, ctrl = _setup(_state("heat", current_temperature=23.5))
     band = TargetTemps(heat=21.0, cool=22.5)
-    assert await _start_then_hold(hass, ctrl, band, current_temp=21.4, started_with=band) == []
+    assert await _start_then_hold(hass, ctrl, band, current_temp=22.4, started_with=band) == []
 
 
 @pytest.mark.asyncio
@@ -759,3 +758,11 @@ async def test_cooling_throttle_never_lowers_a_mild_held_setpoint():
     hass.services.async_call.reset_mock()
     await ctrl.async_apply(MODE_IDLE, band, current_temp=23.2, compressor_forced_on=HELD)
     assert _sent(hass) == []
+
+
+@pytest.mark.asyncio
+async def test_auto_room_with_a_one_sided_target_is_throttled():
+    """No cooling target (one-sided override): nothing ends the boost, so the throttle applies."""
+    hass, ctrl = _setup(_state("heat", current_temperature=23.0))
+    calls = await _start_then_hold(hass, ctrl, TargetTemps(heat=21.0, cool=None), current_temp=21.6)
+    assert [c["temperature"] for c in calls] == [23.0]

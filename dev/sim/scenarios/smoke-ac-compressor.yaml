@@ -52,4 +52,4 @@ timeline:
 expect:
   - {invariant: min_run_commanded}
   - {invariant: target_never_empty}
-  - {metric: comfort.hold_heat_over_max_k, room: wohnzimmer, max: 2.0, label: held unit throttled past target + 0.5 K instead of boosting on (3.6 K before)}
+  - {metric: comfort.hold_heat_over_max_k, room: wohnzimmer, max: 2.0, label: held unit throttled past target + 0.5 K instead of boosting on (2.6 to 3.6 K before)}

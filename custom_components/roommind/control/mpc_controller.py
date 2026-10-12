@@ -2103,9 +2103,10 @@ class MPCController:
         """Throttle a held unit to minimum once the room is ``HOLD_OVERSHOOT_MARGIN`` past its target.
 
         The hold keeps the last active setpoint so the unit does not stop (#436). In a
-        room that cannot switch sides (heat_only, cool_only, or a wide band) nothing
-        else ends the boost before the min-run is over, and a strong unit carries the
-        room several degrees past the target. The unit gets the value its own sensor
+        room without a far side (heat_only / cool_only, or no target on the other side)
+        the band rule never ends the boost before the min-run is over, and a strong
+        unit carries the room several degrees past the target. Rooms with both sides
+        keep the band rule. The unit gets the value its own sensor
         reads, rounded up (heating) or down (cooling) to its step: an inverter there
         modulates to minimum and keeps running, where the plain room target would stop
         a unit whose sensor reads warm. Never past the room target (+ direct offset),
@@ -2117,7 +2118,9 @@ class MPCController:
             return
         heating = hvac == "heat"
         target = targets.heat if heating else targets.cool
-        if target is None:
+        far_side = targets.cool if heating else targets.heat
+        one_sided = self.climate_mode == (CLIMATE_MODE_HEAT_ONLY if heating else CLIMATE_MODE_COOL_ONLY)
+        if target is None or (far_side is not None and not one_sided):
             return
         past = (
             current_temp >= target + HOLD_OVERSHOOT_MARGIN
