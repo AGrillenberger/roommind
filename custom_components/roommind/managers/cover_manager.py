@@ -276,13 +276,15 @@ class CoverManager:
         if not hold_time_ok:
             return CoverDecision(target_position=current, changed=False, reason="min_hold_time")
 
-        # Partial reopening inside an episode follows the slowly falling afternoon
-        # excess; in 20 % steps that was a move every 15 min. The full retract
-        # below the hysteresis band is not affected.
+        # Reopening inside an episode follows the slowly falling afternoon excess;
+        # in 20 % steps that was a move every 15 min. An excess just above the
+        # threshold maps to fully open and counts as reopening too, otherwise the
+        # cover would retract at the threshold instead of below the hysteresis
+        # band. The retract below the band (deadband path above) is not affected.
         reopen_ceiling = state.baseline_position if state.baseline_position is not None else 100
         if (
             not was_forced
-            and current < desired_pos < reopen_ceiling
+            and current < desired_pos <= reopen_ceiling
             and (desired_pos - current < COVER_REOPEN_STEP or now - state.last_change_ts < COVER_REOPEN_HOLD_SECONDS)
         ):
             return CoverDecision(target_position=current, changed=False, reason="reopen_hold")

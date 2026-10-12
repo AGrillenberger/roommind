@@ -1596,20 +1596,22 @@ def test_episode_ending_at_baseline_without_command_relinquishes_ownership(mock_
     assert state.baseline_position == 50
 
     # weakening sun: modulation opens back to the baseline via the deploy path
-    mock_t.time.return_value = 1000.0 + COVER_MIN_HOLD_SECONDS + 1
+    # (a reopening, so it waits for the reopen hold)
+    t = 1000.0 + COVER_REOPEN_HOLD_SECONDS + 1
+    mock_t.time.return_value = t
     d = mgr.evaluate("lr", predicted_peak_temp=23.0, target_temp=21.0, **_BASE_KWARGS)
     assert d.changed is True
     assert d.target_position == 50
 
     # episode ends at the baseline without a command: ownership must be handed back
-    mock_t.time.return_value = 1000.0 + 2 * (COVER_MIN_HOLD_SECONDS + 1)
+    mock_t.time.return_value = t + COVER_MIN_HOLD_SECONDS + 1
     d = mgr.evaluate("lr", predicted_peak_temp=21.2, target_temp=21.0, **_BASE_KWARGS)
     assert d.changed is False
     assert state.baseline_position is None
     assert state.owned is False
 
     # next retract must HOLD at the user position, not auto-open to 100
-    mock_t.time.return_value = 1000.0 + 3 * (COVER_MIN_HOLD_SECONDS + 1)
+    mock_t.time.return_value = t + 2 * (COVER_MIN_HOLD_SECONDS + 1)
     d = mgr.evaluate("lr", predicted_peak_temp=20.0, target_temp=21.0, **_BASE_KWARGS)
     assert d.changed is False
     assert d.reason == "user_position_hold"
@@ -1929,3 +1931,18 @@ def test_shade_by_need_respects_min_position_and_snap():
         "lr", predicted_peak_temp=23.5, target_temp=21.0, shade_by_need=True, covers_snap_deploy=True, **_BASE_KWARGS
     )
     assert d.target_position == 0
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_excess_just_above_threshold_holds_instead_of_retracting(mock_t):
+    """Mapped to fully open, but still inside the deploy band: a reopening, not the retract."""
+    mgr = CoverManager()
+    assert _deployed_to(mgr, mock_t, 1000.0, 24.0) == 25
+    mock_t.time.return_value = 1000.0 + COVER_MIN_HOLD_SECONDS + 1
+    d = mgr.evaluate("lr", predicted_peak_temp=22.51, target_temp=21.0, **_BASE_KWARGS)
+    assert d.changed is False
+    assert d.reason == "reopen_hold"
+    # below the hysteresis band the retract goes ahead after the normal hold
+    d = mgr.evaluate("lr", predicted_peak_temp=21.2, target_temp=21.0, **_BASE_KWARGS)
+    assert d.changed is True
+    assert d.target_position == 100

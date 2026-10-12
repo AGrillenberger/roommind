@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from ..const import (
     CLIMATE_MODE_HEAT_ONLY,
     COVER_CONFIDENCE_REFERENCE_SOLAR,
+    COVER_COOLING_LINEAR_H,
     COVER_COOLING_LOOKAHEAD_H,
     COVER_DAILY_LOOKAHEAD_H,
     COVER_DEFAULT_BETA_S,
@@ -422,20 +423,23 @@ class CoverOrchestrator:
         is not counted above the target, shading cannot stop it:
         peak = max_t [T_sun(t) - max(0, T_nosun(t) - target)].
 
-        Linear estimate: default gain times the solar input over the horizon
-        (no envelope loss, the unit removes all solar heat). It is raised by the
-        RC model trajectories with and without sun when the idle model is
-        confident, and stays the floor: in an AC room the learned solar gain
-        swings with every compressor cycle and falls towards zero while cooling
-        holds the room. With cover orientations the series is GHI weighted by
-        whether the sun is on the facade (see _sunlit_weight).
+        Linear estimate: default gain times the solar input over
+        ``COVER_COOLING_LINEAR_H`` (no envelope loss, the unit removes all solar
+        heat; shorter, as the default gain is about twice a learned one). A
+        confident idle model may raise it with the RC trajectories with and
+        without sun over ``COVER_COOLING_LOOKAHEAD_H``, but not lower it: the
+        confidence check passes on day one while the learned solar gain is
+        still ~0, and over the horizon its spread stays ~2 K for days. With cover
+        orientations the series is GHI weighted by whether the sun is on the
+        facade (see _sunlit_weight).
         """
         base_temp = min(current_temp, target_temp) if current_temp is not None else target_temp
         n_steps = max(1, int(COVER_COOLING_LOOKAHEAD_H * 60 / COVER_PREDICTION_DT_MINUTES))
         solar_series = self._sunlit_solar_series(n_steps, surface_azimuths)
         if not solar_series:
             solar_series = [q_solar] * n_steps
-        solar_input_h = sum(solar_series) * COVER_PREDICTION_DT_MINUTES / 60.0
+        n_linear = max(1, int(COVER_COOLING_LINEAR_H * 60 / COVER_PREDICTION_DT_MINUTES))
+        solar_input_h = sum(solar_series[:n_linear]) * COVER_PREDICTION_DT_MINUTES / 60.0
         linear_peak = base_temp + COVER_DEFAULT_BETA_S * solar_input_h
 
         try:
