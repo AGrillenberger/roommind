@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import signal
 import sys
 from pathlib import Path
@@ -44,6 +45,7 @@ def main(argv: list[str] | None = None) -> int:
     state_file = inst_dir / "state" / STATE_FILE
 
     clk = clockmod.install(float(scenario["start"]), mode=clockmod.PAUSED)
+    seed_randint(int(scenario.get("seed", 1)))
     if state_file.is_file():
         clk.restore(json.loads(state_file.read_text()))
     if not args.resumed:
@@ -81,6 +83,30 @@ def main(argv: list[str] | None = None) -> int:
             [sys.executable, "-m", "roommind_sim.boot", "--instance-dir", str(inst_dir), "--resumed"],
         )
     return exit_code
+
+
+def seed_randint(seed: int) -> None:
+    """Make HA's timer jitter a function of the scenario seed.
+
+    DataUpdateCoordinator, time-change trackers and config entry retries stagger
+    themselves with ``random.randint`` (urandom-seeded), which shifts RoomMind's update
+    phase against the physics by up to 0.45 s per run. They bind ``from random import
+    randint`` at import time, so this must run before ``homeassistant`` is imported.
+    One generator per calling module keeps the draws independent of how imports and
+    executor jobs interleave.
+    """
+    if "homeassistant" in sys.modules:
+        raise RuntimeError("seed_randint() must run before homeassistant is imported")
+    rngs: dict[str, random.Random] = {}
+
+    def randint(a: int, b: int) -> int:
+        module = sys._getframe(1).f_globals.get("__name__", "?")
+        rng = rngs.get(module)
+        if rng is None:
+            rng = rngs[module] = random.Random(f"{seed}:randint:{module}")
+        return rng.randint(a, b)
+
+    random.randint = randint
 
 
 def apply_start_args(

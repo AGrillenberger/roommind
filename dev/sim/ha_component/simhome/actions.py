@@ -36,6 +36,7 @@ async def run_timeline_item(rt: SimRuntime, item: TimelineItem) -> None:
 
 async def run_action(rt: SimRuntime, action: str, args: dict[str, Any]) -> Any:
     hass = rt.hass
+    rt.advance()
     now = time.time()
     if action in World.WORLD_ACTIONS:
         try:

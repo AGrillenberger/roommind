@@ -30,6 +30,8 @@ from .const import FLUSH_INTERVAL_S, OBSERVE_INTERVAL_S, PERSIST_INTERVAL_S
 
 _LOGGER = logging.getLogger(__name__)
 SIM_USER_NAME = "Sim"
+# Float residue of the virtual clock when two timers share an instant; not a real step.
+_MIN_STEP_S = 1e-6
 
 
 class SimRuntime:
@@ -160,9 +162,19 @@ class SimRuntime:
 
     @callback
     def _tick(self, _now: Any) -> None:
+        self.advance()
+
+    @callback
+    def advance(self) -> None:
+        """Step the world up to now (no-op if already there).
+
+        asyncio orders timers due at the same instant by heap shape, not by scheduling
+        order, so samples and timeline actions step first instead of seeing the
+        previous physics step on some runs and the current one on others.
+        """
         now = time.time()
         dt = now - self._last_step
-        if dt <= 0:
+        if dt <= _MIN_STEP_S:
             return
         self._last_step = now
         changed = self.world.step(dt, now)
@@ -179,6 +191,7 @@ class SimRuntime:
 
     @callback
     def _sample(self, _now: Any) -> None:
+        self.advance()
         rec = self.world.sample()
         rec["t"] = round(time.time(), 1)
         self._buffers["samples"].append(json.dumps(rec, separators=(",", ":")))
