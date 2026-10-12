@@ -220,6 +220,26 @@ class TestEvaluateHeatSources:
         assert isinstance(result, HeatSourcePlan)
         assert result.active_sources == "none"
 
+    def test_running_sources_stay_on_at_the_target(self):
+        """The controller keeps a run going at the target (min run, holding power); the
+        orchestrator must not park the devices then, or the AC switches every cycle."""
+        hass = _make_hass(["heat", "cool"])
+        room = _make_room()
+        previous = "secondary"
+        for temp in (20.7, 21.0, 20.9, 21.1):
+            result = evaluate_heat_sources(room, MODE_HEATING, 0.3, temp, 21.0, 10.0, previous, hass)
+            assert result.active_sources == "secondary", temp
+            previous = result.active_sources
+        primary = evaluate_heat_sources(room, MODE_HEATING, 0.3, 21.1, 21.0, 0.0, "primary", hass)
+        assert primary.active_sources == "primary"
+
+    def test_both_falls_back_to_the_preferred_source_at_the_target(self):
+        hass = _make_hass(["heat", "cool"])
+        room = _make_room()
+        mild = evaluate_heat_sources(room, MODE_HEATING, 0.3, 21.0, 21.0, 10.0, "both", hass)
+        cold = evaluate_heat_sources(room, MODE_HEATING, 0.3, 21.0, 21.0, 0.0, "both", hass)
+        assert (mild.active_sources, cold.active_sources) == ("secondary", "primary")
+
     def test_multiple_devices_per_type(self):
         """Multiple thermostats and ACs should all get commands."""
         hass = _make_hass(["heat", "cool"])

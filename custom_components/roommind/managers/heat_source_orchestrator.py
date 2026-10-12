@@ -32,6 +32,9 @@ from ..utils.device_utils import get_ac_eids, get_trv_eids, has_reliable_hvac_mo
 _LOGGER = logging.getLogger(__name__)
 
 
+_RUNNING_SOURCES = ("primary", "secondary", "both")
+
+
 @dataclass
 class DeviceCommand:
     """Command for a single climate device within a heat source plan."""
@@ -114,8 +117,11 @@ def evaluate_heat_sources(
     primary_devices: list[tuple[str, str]] = [(eid, "thermostat") for eid in thermostats]
     secondary_devices: list[tuple[str, str]] = [(eid, "ac") for eid in acs]
 
-    # Early exit: at or above target, no heating needed
-    if delta_t <= 0:
+    # Early exit: at or above target, no heating needed. A run in progress keeps its
+    # sources instead: the controller deliberately heats at the target (min-run
+    # continuation, holding power), and parking everything there switched the
+    # devices on and off every cycle around the target.
+    if delta_t <= 0 and previous_active_sources not in _RUNNING_SOURCES:
         idle_cmds: list[DeviceCommand] = []
         for eid, device_type in primary_devices:
             idle_cmds.append(
