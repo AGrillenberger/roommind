@@ -843,6 +843,173 @@ def fill_missing_targets(heat: float | None, cool: float | None, fallback: float
     return heat, cool
 
 
+def heat_start_hysteresis(ac_heats: bool, has_trvs: bool) -> float:
+    """Distance below the heat target a fast heating run starts at (see MPC_START_HYSTERESIS)."""
+    return BANGBANG_HEAT_HYSTERESIS if ac_heats or not has_trvs else MPC_START_HYSTERESIS
+
+
+def is_slow_heat(min_run_blocks: int) -> bool:
+    """A heating system with a longer min run than an AC (UFH) must start before the drift."""
+    return min_run_blocks > get_min_run_blocks("", PLAN_DT_MINUTES)
+
+
+def compute_horizon_blocks(model: Any, current_temp: float, target_temp: float | None) -> int:
+    """Adaptive MPC horizon in blocks: long enough to reach the target, at least MIN_HORIZON_HOURS."""
+    if target_temp is None:
+        return int(MIN_HORIZON_HOURS * 60 / PLAN_DT_MINUTES)
+    delta = abs(current_temp - target_temp) + 3.0  # extra margin
+    # Q_fast: the air pull-down of an AC room is part of how fast it reaches the target
+    Q_max = max(model.Q_heat, model.Q_cool + model.Q_fast)
+    if Q_max > 0:
+        rate = Q_max / (model.C * 60)  # °C/min approx
+        if rate > 0:
+            est_minutes = delta / rate
+            horizon_minutes = max(MIN_HORIZON_HOURS * 60, est_minutes * HORIZON_MULTIPLIER)
+            return max(24, int(horizon_minutes / PLAN_DT_MINUTES))
+    return int(MIN_HORIZON_HOURS * 60 / PLAN_DT_MINUTES)  # default 24 blocks = 2h
+
+
+def gentle_power(
+    optimizer: MPCOptimizer,
+    mode: str,
+    current_temp: float,
+    outdoor_temp: float,
+    target: float,
+    *,
+    q_solar: float,
+    q_residual: float,
+    q_occupancy: float,
+    rebound_charge: float | None = None,
+) -> float:
+    """Closed-form power for a min-run continuation of *mode*, at least MIN_POWER_FRACTION."""
+    pf, pf_mode = optimizer.compute_optimal_power(
+        current_temp,
+        outdoor_temp,
+        target,
+        PLAN_DT_MINUTES,
+        q_solar=q_solar,
+        q_residual=q_residual,
+        q_occupancy=q_occupancy,
+        rebound_charge=rebound_charge,
+    )
+    return max(pf, MIN_POWER_FRACTION) if pf_mode == mode else MIN_POWER_FRACTION
+
+
+def decide_mpc_action(
+    action: str,
+    power_fraction: float,
+    current_temp: float,
+    heat_target_series: list[float],
+    cool_target_series: list[float],
+    *,
+    guard_blocks: int,
+    slow_heat: bool,
+    previous_mode: str,
+    heat_in_min_run: bool,
+    cool_in_min_run: bool,
+    can_heat: bool,
+    can_cool: bool,
+    heat_hysteresis: float,
+    idle_drift: Callable[[float], float],
+    continuation_power: Callable[[str, float], float],
+    area_id: str | None = None,
+) -> tuple[str, float]:
+    """Apply the controller's rules to the optimizer's first block.
+
+    Shared by ``MPCController._evaluate_mpc`` and the analytics prediction, so the
+    prediction line follows what RoomMind actually does. Pure apart from the two
+    callbacks: ``idle_drift(minutes)`` predicts the room without HVAC,
+    ``continuation_power(mode, target)`` gives the power of a min-run continuation.
+    ``area_id`` enables the hard-ceiling log lines (the prediction passes None).
+
+    Order: hard ceiling, model guard, then the switching hysteresis.
+    """
+    near_heat = heat_target_series[:guard_blocks]
+    near_cool = cool_target_series[:guard_blocks]
+
+    # Hard ceiling: force idle when significantly past target, regardless
+    # of model predictions or min-run window.  Prevents runaway
+    # heating/cooling from a miscalibrated thermal model (#152).
+    if near_heat and action == MODE_HEATING and current_temp > max(near_heat) + HARD_OVERSHOOT_CEILING:
+        if area_id is not None:
+            _LOGGER.info(
+                "Hard ceiling: suppressing HEATING for %s at %.1f°C (target max %.1f°C + %.1f°C ceiling)",
+                area_id,
+                current_temp,
+                max(near_heat),
+                HARD_OVERSHOOT_CEILING,
+            )
+        action = MODE_IDLE
+        power_fraction = 0.0
+    elif near_cool and action == MODE_COOLING and current_temp < min(near_cool) - HARD_OVERSHOOT_CEILING:
+        if area_id is not None:
+            _LOGGER.info(
+                "Hard ceiling: suppressing COOLING for %s at %.1f°C (target min %.1f°C - %.1f°C ceiling)",
+                area_id,
+                current_temp,
+                min(near_cool),
+                HARD_OVERSHOOT_CEILING,
+            )
+        action = MODE_IDLE
+        power_fraction = 0.0
+
+    # Model-based guard: suppress when model predicts temp stays past
+    # target, but allow pre-heating when a drift is predicted. Only a slow
+    # heating system may start early: a fast one catches the drift once it
+    # happens, and an AC's fast air node makes the 1-node model predict steep
+    # drifts that would restart it right after every stop.
+    elif near_heat and action == MODE_HEATING and current_temp >= max(near_heat):
+        if slow_heat and idle_drift(guard_blocks * PLAN_DT_MINUTES) < min(near_heat) - GUARD_PREDICTION_MARGIN:
+            pass  # model predicts dip — allow optimizer's HEAT decision
+        elif not heat_in_min_run:
+            action = MODE_IDLE
+            power_fraction = 0.0
+    elif near_cool and action == MODE_COOLING and current_temp <= min(near_cool):
+        if not cool_in_min_run:
+            action = MODE_IDLE
+            power_fraction = 0.0
+
+    # Switching hysteresis. The optimizer has no memory: it started the moment the
+    # room read below the target and stopped the moment it read above, so a sensor
+    # resolution step (or an AC's air node relaxing right after a stop) switched the
+    # device every 30 s cycle. A run only starts past the start hysteresis, unless a
+    # stricter target is coming up (pre-heating/pre-cooling stays the optimizer's
+    # call), and a run the optimizer wants to end stays on until its minimum run time
+    # is over, at gentle power. A slow heating system (UFH) keeps the optimizer's
+    # heating decisions as they are. The hard ceiling still ends a run at once (it set
+    # IDLE above, and the room is then beyond ``target + ceiling``, where nothing here
+    # re-enables it).
+    heat_now = heat_target_series[0]
+    cool_now = cool_target_series[0]
+    heat_rising = max(near_heat) > heat_now
+    cool_falling = min(near_cool) < cool_now
+
+    if action == MODE_HEATING:
+        if not slow_heat and previous_mode != MODE_HEATING and not heat_rising:
+            if current_temp > heat_now - heat_hysteresis - _TEMP_EPSILON:
+                return MODE_IDLE, 0.0
+    elif action == MODE_COOLING:
+        if previous_mode != MODE_COOLING and not cool_falling:
+            if current_temp < cool_now + MPC_START_HYSTERESIS + _TEMP_EPSILON:
+                return MODE_IDLE, 0.0
+    elif (
+        not slow_heat
+        and previous_mode == MODE_HEATING
+        and can_heat
+        and current_temp < max(near_heat) + HARD_OVERSHOOT_CEILING
+        and heat_in_min_run
+    ):
+        return MODE_HEATING, continuation_power(MODE_HEATING, heat_now)
+    elif (
+        previous_mode == MODE_COOLING
+        and can_cool
+        and current_temp > min(near_cool) - HARD_OVERSHOOT_CEILING
+        and cool_in_min_run
+    ):
+        return MODE_COOLING, continuation_power(MODE_COOLING, cool_now)
+    return action, power_fraction
+
+
 def is_mpc_enabled(settings: dict | None) -> bool:
     """Return False when the user picked simple on/off control (``control_mode``)."""
     return bool((settings or {}).get("control_mode", DEFAULT_CONTROL_MODE) != CONTROL_MODE_BANGBANG)
@@ -1116,8 +1283,6 @@ class MPCController:
             heat_target_series = [fallback_h] * horizon_blocks
             cool_target_series = [fallback_c] * horizon_blocks
 
-        from .residual_heat import get_min_run_blocks
-
         min_run = get_min_run_blocks(self._heating_system_type, PLAN_DT_MINUTES)
 
         optimizer = MPCOptimizer(
@@ -1168,163 +1333,54 @@ class MPCController:
         )
         self._peak_temps_unoccupied = _unoccupied if _unoccupied and len(_unoccupied) > 1 else None
 
-        action = plan.get_current_action()
-        power_fraction = plan.get_current_power_fraction()
-
-        # Safety guard: don't heat above the maximum upcoming target,
-        # don't cool below the minimum upcoming target, while preserving
-        # pre-heating/pre-cooling when the model predicts a drift past target.
         # The guard horizon scales with heating system response time and
         # matches the optimizer's per-system lookahead (read from the plan) so
         # mild-weather UFH pre-heat decisions don't get suppressed by a short
         # drift check.
         guard_blocks = max(SAFETY_GUARD_MIN_BLOCKS, min_run, plan.lookahead_blocks)
-        # Only a slow heating system (UFH) needs to start before the room drifts
-        # past the target; cooling always runs on an AC.
-        slow_heat = min_run > get_min_run_blocks("", PLAN_DT_MINUTES)
-        guard_horizon_minutes = guard_blocks * PLAN_DT_MINUTES
-        near_heat = heat_target_series[:guard_blocks]
-        near_cool = cool_target_series[:guard_blocks]
         lead_heat = [h for h in raw_heat[:guard_blocks] if h is not None]
         lead_cool = [c for c in raw_cool[:guard_blocks] if c is not None]
         self._lead_heat = max(lead_heat) if lead_heat else None
         self._lead_cool = min(lead_cool) if lead_cool else None
-
-        # Hard ceiling: force idle when significantly past target, regardless
-        # of model predictions or min-run window.  Prevents runaway
-        # heating/cooling from a miscalibrated thermal model (#152).
-        if near_heat and action == MODE_HEATING and current_temp > max(near_heat) + HARD_OVERSHOOT_CEILING:
-            _LOGGER.info(
-                "Hard ceiling: suppressing HEATING for %s at %.1f°C (target max %.1f°C + %.1f°C ceiling)",
-                self._area_id,
-                current_temp,
-                max(near_heat),
-                HARD_OVERSHOOT_CEILING,
-            )
-            action = MODE_IDLE
-            power_fraction = 0.0
-        elif near_cool and action == MODE_COOLING and current_temp < min(near_cool) - HARD_OVERSHOOT_CEILING:
-            _LOGGER.info(
-                "Hard ceiling: suppressing COOLING for %s at %.1f°C (target min %.1f°C - %.1f°C ceiling)",
-                self._area_id,
-                current_temp,
-                min(near_cool),
-                HARD_OVERSHOOT_CEILING,
-            )
-            action = MODE_IDLE
-            power_fraction = 0.0
-
-        # Model-based guard: suppress when model predicts temp stays past
-        # target, but allow pre-heating when a drift is predicted. Only a slow
-        # heating system may start early: a fast one catches the drift once it
-        # happens, and an AC's fast air node makes the 1-node model predict steep
-        # drifts that would restart it right after every stop.
-        elif near_heat and action == MODE_HEATING and current_temp >= max(near_heat):
-            predicted = self._predict_idle_drift(current_temp, guard_horizon_minutes)
-            if slow_heat and predicted < min(near_heat) - GUARD_PREDICTION_MARGIN:
-                pass  # model predicts dip — allow optimizer's HEAT decision
-            elif not self._within_min_run(MODE_HEATING):
-                action = MODE_IDLE
-                power_fraction = 0.0
-        elif near_cool and action == MODE_COOLING and current_temp <= min(near_cool):
-            if not self._within_min_run(MODE_COOLING):
-                action = MODE_IDLE
-                power_fraction = 0.0
-
-        action, power_fraction = self._apply_switching_hysteresis(
-            action,
-            power_fraction,
+        outdoor_now = outdoor_series[0]
+        return decide_mpc_action(
+            plan.get_current_action(),
+            plan.get_current_power_fraction(),
             current_temp,
             heat_target_series,
             cool_target_series,
-            guard_blocks,
-            optimizer,
-            outdoor_series[0],
+            guard_blocks=guard_blocks,
+            slow_heat=is_slow_heat(min_run),
+            previous_mode=self.previous_mode,
+            heat_in_min_run=self._within_min_run(MODE_HEATING),
+            cool_in_min_run=self._within_min_run(MODE_COOLING),
             can_heat=can_heat,
             can_cool=can_cool,
-            slow_heat=slow_heat,
+            heat_hysteresis=heat_start_hysteresis(
+                check_acs_can_heat(self.hass, self.room_config), bool(self.thermostats)
+            ),
+            idle_drift=lambda minutes: self._predict_idle_drift(current_temp, minutes),
+            continuation_power=lambda mode, target: self._gentle_power(
+                optimizer, mode, current_temp, outdoor_now, target
+            ),
+            area_id=self._area_id,
         )
-
-        return action, power_fraction
-
-    def _apply_switching_hysteresis(
-        self,
-        action: str,
-        power_fraction: float,
-        current_temp: float,
-        heat_target_series: list[float],
-        cool_target_series: list[float],
-        guard_blocks: int,
-        optimizer: MPCOptimizer,
-        outdoor_temp: float,
-        *,
-        can_heat: bool,
-        can_cool: bool,
-        slow_heat: bool,
-    ) -> tuple[str, float]:
-        """Keep a fast system from toggling heat/idle every cycle around the target.
-
-        The optimizer has no memory: it started the moment the room read below the
-        target and stopped the moment it read above, so a sensor resolution step (or
-        an AC's air node relaxing right after a stop) switched the device every
-        30 s cycle. Two rules:
-
-        * a run only starts past the start hysteresis, unless a stricter target
-          is coming up (pre-heating/pre-cooling stays the optimizer's call),
-        * a run the optimizer wants to end stays on until its minimum run time is
-          over, at gentle power.
-
-        A slow heating system (UFH) keeps the optimizer's heating decisions as they
-        are. The hard ceiling still ends a run at once (it set IDLE above, and the
-        room is then beyond ``target + ceiling``, where nothing here re-enables it).
-        """
-        heat_now = heat_target_series[0]
-        cool_now = cool_target_series[0]
-        heat_rising = max(heat_target_series[:guard_blocks]) > heat_now
-        cool_falling = min(cool_target_series[:guard_blocks]) < cool_now
-
-        if action == MODE_HEATING:
-            if not slow_heat and self.previous_mode != MODE_HEATING and not heat_rising:
-                ac_heats = check_acs_can_heat(self.hass, self.room_config)
-                hysteresis = BANGBANG_HEAT_HYSTERESIS if ac_heats or not self.thermostats else MPC_START_HYSTERESIS
-                if current_temp > heat_now - hysteresis - _TEMP_EPSILON:
-                    return MODE_IDLE, 0.0
-        elif action == MODE_COOLING:
-            if self.previous_mode != MODE_COOLING and not cool_falling:
-                if current_temp < cool_now + MPC_START_HYSTERESIS + _TEMP_EPSILON:
-                    return MODE_IDLE, 0.0
-        elif (
-            not slow_heat
-            and self.previous_mode == MODE_HEATING
-            and can_heat
-            and current_temp < max(heat_target_series[:guard_blocks]) + HARD_OVERSHOOT_CEILING
-            and self._within_min_run(MODE_HEATING)
-        ):
-            return MODE_HEATING, self._gentle_power(optimizer, MODE_HEATING, current_temp, outdoor_temp, heat_now)
-        elif (
-            self.previous_mode == MODE_COOLING
-            and can_cool
-            and current_temp > min(cool_target_series[:guard_blocks]) - HARD_OVERSHOOT_CEILING
-            and self._within_min_run(MODE_COOLING)
-        ):
-            return MODE_COOLING, self._gentle_power(optimizer, MODE_COOLING, current_temp, outdoor_temp, cool_now)
-        return action, power_fraction
 
     def _gentle_power(
         self, optimizer: MPCOptimizer, mode: str, current_temp: float, outdoor_temp: float, target: float
     ) -> float:
         """Closed-form power for *mode*, at least MIN_POWER_FRACTION."""
-        pf, pf_mode = optimizer.compute_optimal_power(
+        return gentle_power(
+            optimizer,
+            mode,
             current_temp,
             outdoor_temp,
             target,
-            PLAN_DT_MINUTES,
             q_solar=self.q_solar * self._shading_factor,
             q_residual=self.q_residual,
             q_occupancy=self.q_occupancy,
             rebound_charge=self.q_rebound,
         )
-        return max(pf, MIN_POWER_FRACTION) if pf_mode == mode else MIN_POWER_FRACTION
 
     def _evaluate_bangbang(
         self,
@@ -1431,22 +1487,8 @@ class MPCController:
         return can_heat, can_cool
 
     def _compute_horizon_blocks(self, model: Any, current_temp: float, target_temp: float | None) -> int:
-        """Compute adaptive horizon in blocks.
-
-        target_temp can be a single value or the primary target from TargetTemps.
-        """
-        if target_temp is None:
-            return int(MIN_HORIZON_HOURS * 60 / PLAN_DT_MINUTES)
-        delta = abs(current_temp - target_temp) + 3.0  # extra margin
-        # Q_fast: the air pull-down of an AC room is part of how fast it reaches the target
-        Q_max = max(model.Q_heat, model.Q_cool + model.Q_fast)
-        if Q_max > 0:
-            rate = Q_max / (model.C * 60)  # °C/min approx
-            if rate > 0:
-                est_minutes = delta / rate
-                horizon_minutes = max(MIN_HORIZON_HOURS * 60, est_minutes * HORIZON_MULTIPLIER)
-                return max(24, int(horizon_minutes / PLAN_DT_MINUTES))
-        return int(MIN_HORIZON_HOURS * 60 / PLAN_DT_MINUTES)  # default 24 blocks = 2h
+        """Compute adaptive horizon in blocks (see ``compute_horizon_blocks``)."""
+        return compute_horizon_blocks(model, current_temp, target_temp)
 
     def _build_outdoor_series(self, n_blocks: int) -> list[float]:
         """Build outdoor temperature series for the MPC horizon.

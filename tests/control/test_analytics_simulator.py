@@ -823,43 +823,30 @@ class TestSimulateMPCEdgeCases:
         # Should drift toward outdoor (all idle)
         assert result[-1] < 15.0
 
-    def test_min_run_stickiness(self):
-        """Minimum run time blocks prevent premature mode switch (lines 210-211)."""
-        # Use underfloor heating with large min_run
+    def test_ufh_run_follows_the_controller_not_a_full_power_min_run(self):
+        """The controller keeps UFH heating at the optimizer's proportional power; the
+        prediction used to force full power for the whole min run and overshot by ~3 K."""
         model = RCModel(C=1.0, U=5.0, Q_heat=120.0, Q_cool=50.0, Q_solar=0.0)
         target_forecast = [{"target_temp": 21.0, "heat_target": 21.0, "cool_target": 24.0}] * 10
-        outdoor_series = [5.0] * 10
         room_config = {
             "thermostats": ["climate.trv"],
             "acs": [],
             "devices": [{"entity_id": "climate.trv", "type": "trv", "role": "auto", "heating_system_type": ""}],
             "climate_mode": "auto",
         }
-        # With underfloor min_run=6 blocks, heating continues even if temp exceeds target
         result = _simulate_mpc(
             model,
             target_forecast,
-            outdoor_series,
+            [5.0] * 10,
             current_temp=15.0,
             room_config=room_config,
             settings={},
             heating_system_type="underfloor",
         )
         assert len(result) == 10
-        # With Q_heat=120/U=5.0, temp exceeds target (21) after block 1, but
-        # underfloor min_run=6 forces continued heating. Verify at least 6
-        # consecutive temperature increases from the start.
-        consecutive_increases = 0
-        prev = 15.0
-        for t in result:
-            if t > prev:
-                consecutive_increases += 1
-            else:
-                break
-            prev = t
-        assert consecutive_increases >= 6, (
-            f"Expected >= 6 consecutive heating blocks (underfloor min_run), got {consecutive_increases}"
-        )
+        assert result[0] > 15.0
+        assert max(result) < 21.5
+        assert result[-1] == pytest.approx(21.0, abs=0.2)
 
     def test_cooling_action_applies_negative_q(self):
         """Cooling action → Q = -(pf * Q_cool) (line 249)."""

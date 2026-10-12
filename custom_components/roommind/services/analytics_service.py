@@ -17,6 +17,7 @@ from ..const import (
     DEFAULT_COMFORT_HEAT,
     DEFAULT_ECO_COOL,
     DEFAULT_ECO_HEAT,
+    MODE_IDLE,
 )
 from ..control.mpc_controller import (
     DEFAULT_OUTDOOR_TEMP_FALLBACK,
@@ -363,6 +364,12 @@ async def build_analytics_data(
                         sim_q_occupancy = 1.0
                         break
 
+                # Seed the run in progress: without it the prediction starts idle, and a
+                # room inside the start hysteresis predicts a stop RoomMind never makes.
+                sim_prev_mode = coordinator._previous_modes.get(area_id, MODE_IDLE)
+                mode_on_since = coordinator._mode_on_since.get(area_id)
+                sim_mode_elapsed = (time.time() - mode_on_since) / 60.0 if mode_on_since is not None else None
+
                 pred_temps = cast(
                     list[float | None],
                     simulate_prediction(
@@ -384,6 +391,8 @@ async def build_analytics_data(
                         last_power_fraction=sim_last_pf,
                         q_occupancy=sim_q_occupancy,
                         q_rebound=coordinator._rebound_tracker.get_charge(area_id),
+                        previous_mode=sim_prev_mode,
+                        mode_elapsed_minutes=sim_mode_elapsed,
                     ),
                 )
 
