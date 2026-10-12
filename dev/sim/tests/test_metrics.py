@@ -178,3 +178,11 @@ def test_cover_metrics_without_sun_or_moves():
     assert m["sunny_days"] == 0
     assert m["earliest_first_move_h"] is None
     assert m["mean_shaded_position"] is None
+
+
+def test_idle_below_target_measures_the_longest_idle_stretch():
+    temps = [19.0, 19.5, 19.5, 19.5, 20.5, 19.5, 19.5]
+    idle = [False, True, True, True, True, True, False]
+    m = _room_metrics(_run(temps, [21.0] * 7, idle), "r")
+    # idle 1.5 K below from t1 to t3 (2 h); t4 is within 1 K, t5 idle again for 0 h
+    assert m["idle_below_target_max_h"] == pytest.approx(2.0)

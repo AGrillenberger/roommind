@@ -32,6 +32,8 @@ HEAT_BAND_K = 0.5
 COAST_REWARM_K = 0.3
 PREHEAT_LOOKAHEAD_S = 3 * 3600
 HOLD_REF_LOOKBACK_S = 1800
+# A room idle this far below its heat target counts toward idle_below_target_max_h
+IDLE_BELOW_TARGET_K = 1.0
 
 
 def _upcoming_heat(run: RunData, area: str) -> list[tuple[float, float | None]]:
@@ -79,6 +81,8 @@ def _room_metrics(run: RunData, area: str) -> dict[str, Any]:
     coast_min: float | None = None
     pred_err: list[float] = []
     hold_max = hold_kh = 0.0
+    idle_below_since: float | None = None
+    idle_below_max_h = 0.0
     recent_heat: deque[tuple[float, float]] = deque()
     prev_t = None
     for s in run.samples:
@@ -105,6 +109,16 @@ def _room_metrics(run: RunData, area: str) -> dict[str, Any]:
         covered += dt_h
         if heat is not None and t_air < heat:
             under += (heat - t_air) * dt_h
+        if (
+            heat is not None
+            and t_air < heat - IDLE_BELOW_TARGET_K
+            and room.get("mode") == "idle"
+            and not room.get("window_open")
+        ):
+            idle_below_since = idle_below_since if idle_below_since is not None else s["t"]
+            idle_below_max_h = max(idle_below_max_h, (s["t"] - idle_below_since) / 3600)
+        else:
+            idle_below_since = None
         if heat is not None:
             above_band += max(0.0, t_air - heat - HEAT_BAND_K) * dt_h
             k = bisect_right(upcoming_t, s["t"]) - 1
@@ -147,6 +161,7 @@ def _room_metrics(run: RunData, area: str) -> dict[str, Any]:
         "heat_above_band_kh": round(above_band, 3),
         "hold_heat_over_max_k": round(hold_max, 2),
         "hold_heat_over_kh": round(hold_kh, 3),
+        "idle_below_target_max_h": round(idle_below_max_h, 2),
         "in_band_pct": round(100 * in_band / covered, 1) if covered else None,
         "temp_min": round(min(temps), 2) if temps else None,
         "temp_max": round(max(temps), 2) if temps else None,
