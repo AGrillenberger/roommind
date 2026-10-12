@@ -843,3 +843,20 @@ def test_cooling_min_run_defaults_to_the_heating_one():
     assert opt._min_run_for(MODE_COOLING) == 4
     assert opt._min_run_for(MODE_HEATING) == 4
     assert MPCOptimizer(opt.model, min_run_blocks=4, cool_min_run_blocks=2)._min_run_for(MODE_COOLING) == 2
+
+
+def test_forced_min_run_continuation_plans_gentle_power():
+    """Past the target inside the min run the plan uses gentle power like the controller,
+    not full power: that predicted the room 1-3 K below the cool target (phantom undercooling)."""
+    model = RCModel(C=1.0, U=0.5, Q_heat=6.0, Q_cool=6.0)
+    plan = MPCOptimizer(model, can_heat=False, can_cool=True, min_run_blocks=6).optimize(
+        T_room=25.5,
+        T_outdoor_series=[20.0] * 24,
+        heat_target_series=[21.0] * 24,
+        cool_target_series=[24.0] * 24,
+        dt_minutes=5,
+    )
+    assert plan.actions[:6] == [MODE_COOLING] * 6
+    assert plan.power_fractions[0] == 1.0
+    assert all(MIN_POWER_FRACTION <= pf < 1.0 for pf in plan.power_fractions[2:6])
+    assert min(plan.temperatures[:7]) > 23.0  # full power reached ~21.4 by the end of the run

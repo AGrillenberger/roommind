@@ -188,7 +188,8 @@ class MPCOptimizer:
                 available.append(MODE_COOLING)
 
             # If in a run and below min_run_blocks, must continue
-            if current_mode != MODE_IDLE and blocks_in_mode < self._min_run_for(current_mode):
+            forced = current_mode != MODE_IDLE and blocks_in_mode < self._min_run_for(current_mode)
+            if forced:
                 if current_mode in available:
                     best_action = current_mode
                 else:
@@ -225,7 +226,7 @@ class MPCOptimizer:
             # Compute proportional power fraction for this block
             # Use heat target for heating power, cool target for cooling power
             pf_target = heat_tgt if best_action == MODE_HEATING else cool_tgt
-            pf, _ = self.compute_optimal_power(
+            pf, pf_mode = self.compute_optimal_power(
                 current_temp,
                 T_out,
                 pf_target,
@@ -237,8 +238,29 @@ class MPCOptimizer:
             )
             if best_action == MODE_IDLE:
                 pf = 0.0
-            elif best_action != MODE_IDLE and pf == 0.0:
-                pf = 1.0  # min_run_blocks enforcement: keep full power
+            elif forced and (pf_mode != best_action or pf == 0.0):
+                # Past the target inside the min run: the controller continues at gentle
+                # power, so the plan must not show a full-power run (a phantom 1-3 K
+                # overshoot that the cover logic and the prediction line read).
+                horizon = slice(i, i + self._lookahead_blocks)
+                strict = (
+                    max(heat_target_series[horizon])
+                    if best_action == MODE_HEATING
+                    else min(cool_target_series[horizon])
+                )
+                pf, pf_mode = self.compute_optimal_power(
+                    current_temp,
+                    T_out,
+                    strict,
+                    dt_minutes,
+                    q_solar=qs,
+                    q_residual=qr,
+                    q_occupancy=qo,
+                    rebound_charge=charge,
+                )
+                pf = max(pf, MIN_POWER_FRACTION) if pf_mode == best_action else MIN_POWER_FRACTION
+            elif pf == 0.0:
+                pf = 1.0  # pre-heating/pre-cooling for a later target: full power
 
             # Apply action with proportional Q for accurate forward prediction
             if best_action == MODE_HEATING:
