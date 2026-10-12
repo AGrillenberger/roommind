@@ -31,5 +31,5 @@ expect:
   - {metric: comfort.in_band_pct, room: wohnzimmer, min: 85}
   # main: the split switched with the orchestrator every cycle around the target (26/h)
   - {metric: device.commands_per_hour, entity_id: climate.wz_split, max: 8}
-  # catches a screed that never starts (the room sat 3 K below target for hours)
-  - {metric: comfort.undershoot_kh, room: wohnzimmer, max: 10}
+  # catches a screed that stays off for hours (18-27 Kh); normal runs 6-15 Kh over seeds 1-3
+  - {metric: comfort.undershoot_kh, room: wohnzimmer, max: 17}

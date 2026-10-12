@@ -419,9 +419,9 @@ class TestSimulateBangbang:
         )
         assert len(result) == 5
         # With strong heating (Q_heat=120, U=5.0), temp exceeds target after 1 block,
-        # but min_run=2 forces at least 2 consecutive heating blocks. Verify first
-        # two blocks both show temperature increases (heating active).
+        # min_run=2 keeps the second block heating while below target + hard ceiling.
         assert result[0] > 18.0, "Block 1 should heat"
+        assert result[0] < 21.0 + 1.0
         assert result[1] > result[0], "Block 2 should still heat (min_run stickiness)"
 
     def test_cooling_scenario(self):

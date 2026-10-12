@@ -68,5 +68,5 @@ expect:
   - {invariant: min_run_hold_keeps_setpoint}
   - {invariant: no_heat_and_cool_same_group}
   - {metric: comfort.in_band_pct, room: buero, min: 90, label: office not left idle below target (49 % before the fix)}
-  - {metric: comfort.hold_heat_over_max_k, room: buero, max: 2.0, known_failure: 'candidate: during EKF learning bang-bang keeps the 3.5 kW unit on full boost for the 10 min room min run, so the 10 m2 office is already 4 K or more past target when the hold starts; the hold throttle cannot take that heat back'}
+  - {metric: comfort.hold_heat_over_max_k, room: buero, max: 2.0, label: no full boost through the min run while the EKF learns (7.4 K before)}
   - {invariant: max_commands_per_hour, limit: 12, known_failure: 'candidate: the 30 s toggling is fixed; the hour limit is still exceeded by on/off cycles of the 10 m2 office (4 commands each) and proportional setpoint steps during the 15 min group hold'}

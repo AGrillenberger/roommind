@@ -20,6 +20,7 @@ from ..const import (
 )
 from ..utils.device_utils import get_ac_eids, get_trv_eids
 from .mpc_controller import (
+    HARD_OVERSHOOT_CEILING,
     PLAN_DT_MINUTES,
     SAFETY_GUARD_MIN_BLOCKS,
     compute_horizon_blocks,
@@ -28,6 +29,7 @@ from .mpc_controller import (
     gentle_power,
     get_can_heat_cool,
     heat_start_hysteresis,
+    is_mpc_enabled,
     is_slow_heat,
 )
 from .mpc_optimizer import MPCOptimizer, slow_start_penalty
@@ -209,6 +211,7 @@ def simulate_prediction(
         previous_mode=previous_mode,
         mode_elapsed_minutes=mode_elapsed_minutes,
         q_rebound=q_rebound,
+        capped=is_mpc_enabled(settings) and not is_slow_heat(get_min_run_blocks(heating_system_type, PLAN_DT_MINUTES)),
     )
 
 
@@ -473,6 +476,14 @@ def _simulate_mpc(
     return pred_temps
 
 
+def _past_ceiling(mode: str, T: float, heat: float | None, cool: float | None, capped: bool) -> bool:
+    if not capped:
+        return False
+    if mode == MODE_HEATING:
+        return heat is not None and T >= heat + HARD_OVERSHOOT_CEILING
+    return mode == MODE_COOLING and cool is not None and T <= cool - HARD_OVERSHOOT_CEILING
+
+
 def _simulate_bangbang(
     model: RCModel,
     target_forecast: list[dict],
@@ -491,8 +502,13 @@ def _simulate_bangbang(
     previous_mode: str = MODE_IDLE,
     mode_elapsed_minutes: float | None = None,
     q_rebound: float | None = None,
+    capped: bool = True,
 ) -> list[float]:
-    """Bang-bang fallback simulation with mode stickiness + idle rate cap."""
+    """Bang-bang fallback simulation with mode stickiness + idle rate cap.
+
+    ``capped``: the learning-phase min run stops at the hard ceiling; Simple mode
+    (``control_mode`` bangbang) keeps the plain rule.
+    """
     observed_idle_rate = compute_observed_idle_rate(all_points)
     has_heat = bool(get_trv_eids(room_config.get("devices", []))) or acs_can_heat
     has_cool = bool(get_ac_eids(room_config.get("devices", [])))
@@ -521,8 +537,12 @@ def _simulate_bangbang(
             # Force idle when both targets are None (devices turned off)
             sim_mode = MODE_IDLE
             blocks_in_mode = 0
-        elif sim_mode != MODE_IDLE and blocks_in_mode < (min_run if sim_mode == MODE_HEATING else cool_min_run):
-            pass  # honour minimum run time
+        elif (
+            sim_mode != MODE_IDLE
+            and blocks_in_mode < (min_run if sim_mode == MODE_HEATING else cool_min_run)
+            and not _past_ceiling(sim_mode, T, h_tgt, c_tgt, capped)
+        ):
+            pass  # honour minimum run time, up to the hard ceiling like the controller
         elif sim_mode == MODE_HEATING:
             if h_tgt is None or T >= h_tgt:
                 sim_mode = MODE_IDLE

@@ -228,7 +228,9 @@ class TestHoldFollowsDeliberateTargetChange:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("name", list(SCENARIOS))
     async def test_change_during_the_mode_minimum_run_reaches_the_hold(self, hass, mock_config_entry, name):
-        """The change arrives while the room is still in heating (mode min-run): the hold must still send it (R2b)."""
+        """The change arrives while the room is still in its mode min-run (R2b). The room is then
+        more than the hard ceiling past the lowered target, so the run ends at once and the
+        compressor hold sends the new target right away instead of a tick later."""
         scenario, expected = self.SCENARIOS[name]
         store = _make_store_mock({AREA: AC_ROOM}, settings={"compressor_groups": [GROUP]})
         hass.data = {"roommind": {"store": store}}
@@ -250,14 +252,17 @@ class TestHoldFollowsDeliberateTargetChange:
             hass.states.get = MagicMock(side_effect=lambda eid: ac["state"] if eid == AC else base(eid))
 
         hass.services.async_call.reset_mock()
-        data = await coordinator._async_update_data()  # mode min-run: still heating, the boost is unchanged
-        assert data["rooms"][AREA]["mode"] == MODE_HEATING
-        assert _calls(hass, "set_temperature") == []
+        data = await coordinator._async_update_data()  # mode min-run, but past target + ceiling
+        assert data["rooms"][AREA]["mode"] == MODE_IDLE
+        assert data["rooms"][AREA]["compressor_protection_reason"] == "min_run"
+        assert [c[0][2]["temperature"] for c in _calls(hass, "set_temperature")] == [expected]
 
+        ac["state"] = _ac_state("heat", expected)
+        hass.services.async_call.reset_mock()
         _age_mode(coordinator)
         data = await coordinator._async_update_data()
         assert data["rooms"][AREA]["mode"] == MODE_IDLE
-        assert [c[0][2]["temperature"] for c in _calls(hass, "set_temperature")] == [expected]
+        assert _calls(hass, "set_temperature") == []
 
     @pytest.mark.asyncio
     async def test_target_reached_without_a_change_still_sends_nothing(self, hass, mock_config_entry):

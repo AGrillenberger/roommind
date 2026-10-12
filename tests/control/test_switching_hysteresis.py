@@ -355,3 +355,68 @@ def test_ac_heating_alone_in_the_bang_bang_fallback():
 def test_orchestration_without_ufh_keeps_the_room_rules():
     ctrl = _controller({**ORCH_UFH_ROOM, "heating_system_type": ""}, outdoor_temp=10.0)
     assert ctrl._resolve_run_system(20.0, 21.0) == ""
+
+
+# --- bang-bang min run: no full boost far past the target ---------------------------
+
+
+@pytest.mark.parametrize(
+    ("temp", "expected"),
+    [(20.5, (MODE_HEATING, 1.0)), (21.5, (MODE_HEATING, 1.0)), (22.0, (MODE_IDLE, 0.0))],
+)
+@pytest.mark.asyncio
+async def test_bangbang_min_run_continues_up_to_the_ceiling(temp, expected):
+    """Learning phase: a strong AC in a small room used to run its whole min run at full
+    boost and overheat by 4-8 K before the compressor hold even started. Power stays
+    binary so the EKF learns what the device delivers."""
+    ctrl = _controller(**_within_min_run(MODE_HEATING))
+    assert await ctrl.async_evaluate(temp, TargetTemps(heat=21.0, cool=24.0)) == expected
+
+
+@pytest.mark.parametrize(
+    ("temp", "expected"),
+    [(24.5, (MODE_COOLING, 1.0)), (23.5, (MODE_COOLING, 1.0)), (23.0, (MODE_IDLE, 0.0))],
+)
+@pytest.mark.asyncio
+async def test_bangbang_cooling_min_run_continues_up_to_the_ceiling(temp, expected):
+    ctrl = _controller(COOL_ROOM, outdoor_temp=30.0, **_within_min_run(MODE_COOLING))
+    assert await ctrl.async_evaluate(temp, TargetTemps(heat=None, cool=24.0)) == expected
+
+
+@pytest.mark.asyncio
+async def test_simple_mode_keeps_the_plain_min_run():
+    """control_mode bangbang (Simple): plain on/off, the capped min run cycled IR ACs 3x as often."""
+    room = make_room(climate_mode="heat_only")
+    ctrl = MPCController(
+        build_hass(),
+        room,
+        model_manager=RoomModelManager(),
+        outdoor_temp=5.0,
+        settings={"control_mode": "bangbang"},
+        has_external_sensor=True,
+        **_within_min_run(MODE_HEATING),
+    )
+    assert await ctrl.async_evaluate(22.5, TargetTemps(heat=21.0, cool=24.0)) == (MODE_HEATING, 1.0)
+
+
+def test_prediction_bangbang_capped_only_while_learning():
+    from custom_components.roommind.control.analytics_simulator import _simulate_bangbang
+
+    model = RCModel(C=1.0, U=0.3, Q_heat=40.0, Q_cool=0.0)
+    room = make_room(climate_mode="heat_only")
+    kw = {"previous_mode": MODE_HEATING, "mode_elapsed_minutes": 0.0}
+    forecast = [{"target_temp": 21.0, "heat_target": 21.0, "cool_target": 24.0}] * 2
+    capped = _simulate_bangbang(model, forecast, [5.0] * 2, 22.5, room, [], **kw)
+    plain = _simulate_bangbang(model, forecast, [5.0] * 2, 22.5, room, [], capped=False, **kw)
+    assert plain[0] > capped[0]
+
+
+@pytest.mark.asyncio
+async def test_slow_heating_room_keeps_the_plain_min_run_while_learning():
+    """UFH + split: the capped learning runs left the screed idle for hours on one seed."""
+    ctrl = _controller(
+        {"climate_mode": "heat_only", "heating_system_type": "underfloor"},
+        heating_system_type="underfloor",
+        **_within_min_run(MODE_HEATING),
+    )
+    assert await ctrl.async_evaluate(22.5, TargetTemps(heat=21.0, cool=24.0)) == (MODE_HEATING, 1.0)

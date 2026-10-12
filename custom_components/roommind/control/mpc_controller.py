@@ -1474,14 +1474,25 @@ class MPCController:
         heat_target = targets.heat
         cool_target = targets.cool
 
-        # Mode stickiness
+        # Mode stickiness. While the model learns, the min run keeps a run going past the
+        # target only up to the hard ceiling: a strong AC in a small room otherwise ran its
+        # min run at full boost and overheated by 4-8 K. Power stays binary (an AC does not
+        # deliver a throttled fraction, the EKF learned a 3x heating rate from one). Simple
+        # mode and slow heating systems keep the plain rule (UFH + split: the shorter
+        # learning runs left the screed idle for hours on one seed).
+        capped = self._mpc_enabled and not is_slow_heat(get_min_run_blocks(self._heating_system_type, PLAN_DT_MINUTES))
+        ceiling = HARD_OVERSHOOT_CEILING if capped else math.inf
         if self.previous_mode == MODE_HEATING and can_heat and heat_target is not None:
-            if current_temp < heat_target or self._within_min_run(MODE_HEATING):
+            if current_temp < heat_target or (
+                self._within_min_run(MODE_HEATING) and current_temp < heat_target + ceiling
+            ):
                 return MODE_HEATING
             return MODE_IDLE
 
         if self.previous_mode == MODE_COOLING and can_cool and cool_target is not None:
-            if current_temp > cool_target or self._within_min_run(MODE_COOLING):
+            if current_temp > cool_target or (
+                self._within_min_run(MODE_COOLING) and current_temp > cool_target - ceiling
+            ):
                 return MODE_COOLING
             return MODE_IDLE
 
