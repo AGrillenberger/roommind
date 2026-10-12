@@ -1377,6 +1377,7 @@ class MPCController:
             heating_system_type=run_system,
             approach_rate=self._approach_rate,
             start_penalty=slow_start_penalty(min_run, PLAN_DT_MINUTES),
+            fast_heater_shares_model=check_acs_can_heat(self.hass, self.room_config),
         )
 
         plan = optimizer.optimize(

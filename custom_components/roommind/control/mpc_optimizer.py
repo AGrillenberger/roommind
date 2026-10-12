@@ -95,6 +95,8 @@ class MPCOptimizer:
     override_active: bool = False
     heating_system_type: str = ""  # key into HEATING_SYSTEM_PROFILES; "" = unknown
     approach_rate: float = 1.0  # fraction of remaining gap closed per block; 1.0 = legacy deadbeat
+    # A heat-capable AC heats the room too, so the learned heating rate is not the screed's
+    fast_heater_shares_model: bool = False
     start_penalty: float = 0.0  # comfort-weighted cost of starting a heating/cooling run (#429)
 
     def __post_init__(self) -> None:
@@ -416,12 +418,33 @@ class MPCOptimizer:
             )
 
         charge = rebound_charge
+        synth_pf_sum = 0.0
         for j in range(lookahead):
             qs = solar[j] if j < len(solar) else 0.0
             qo = occupancy[j] if j < len(occupancy) else 0.0
             # Simulate HVAC for the mode's min run (not just 1 block) to correctly
             # value sustained heating/cooling over the lookahead horizon.
             block_Q = Q if j < run_blocks else 0.0
+            if synthesis_enabled and self.fast_heater_shares_model and j < run_blocks:
+                # The learned heating rate is shared with a fast split (beta_h ~10 K/h):
+                # at full power for the whole UFH min run plus afterglow that looked like
+                # a 4 K overshoot, idle won and the room sat 2 K below target for hours.
+                # Judge the run at the proportional power the controller recomputes every
+                # cycle instead. Pure UFH rooms keep the full-power run (on/off actuators,
+                # a rate learned from the screed alone).
+                h_j = future_heat_targets[j] if j < len(future_heat_targets) else heat_target
+                pf_j, pf_mode = self.compute_optimal_power(
+                    T,
+                    future_T_outdoor[j],
+                    h_j,
+                    dt_minutes,
+                    q_solar=qs,
+                    q_occupancy=qo,
+                    rebound_charge=charge,
+                )
+                pf_j = max(pf_j, MIN_POWER_FRACTION) if pf_mode == MODE_HEATING else MIN_POWER_FRACTION
+                block_Q = Q * pf_j
+                synth_pf_sum += pf_j
             # Residual for the idle / post-run blocks. For the HEATING
             # hypothesis on a gated slow system, synthesize the afterglow this
             # hypothetical run would generate; otherwise fall back to the
@@ -431,7 +454,7 @@ class MPCOptimizer:
                 qr = compute_residual_heat(
                     elapsed,
                     self.heating_system_type,
-                    last_power_fraction=1.0,
+                    last_power_fraction=(synth_pf_sum / max(run_blocks, 1) if self.fast_heater_shares_model else 1.0),
                     heating_duration_minutes=heating_duration_minutes,
                 )
             else:

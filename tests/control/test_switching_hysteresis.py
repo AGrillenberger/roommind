@@ -420,3 +420,21 @@ async def test_slow_heating_room_keeps_the_plain_min_run_while_learning():
         **_within_min_run(MODE_HEATING),
     )
     assert await ctrl.async_evaluate(22.5, TargetTemps(heat=21.0, cool=24.0)) == (MODE_HEATING, 1.0)
+
+
+@pytest.mark.parametrize(("ac_modes", "expected"), [(["off", "heat", "cool"], True), (["off", "cool"], False)])
+def test_optimizer_knows_when_a_heating_ac_shares_the_model(monkeypatch, ac_modes, expected):
+    seen: dict = {}
+    real_init = MPCOptimizer.__init__
+
+    def spy(self, *args, **kwargs):
+        seen.update(kwargs)
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(MPCOptimizer, "__init__", spy)
+    _fake_plan(monkeypatch, MODE_IDLE)
+    room = {"climate_mode": "heat_only", "acs": ["climate.ac1"], "heating_system_type": "underfloor"}
+    ctrl = _controller(room, heating_system_type="underfloor")
+    ctrl.hass.states.get = MagicMock(return_value=_ac_state(ac_modes))
+    ctrl._evaluate_mpc(20.0, TargetTemps(heat=21.0, cool=None))
+    assert seen["fast_heater_shares_model"] is expected

@@ -390,6 +390,7 @@ def _simulate_mpc(
                 heating_system_type=heating_system_type,
                 approach_rate=approach_rate,
                 start_penalty=start_penalty,
+                fast_heater_shares_model=acs_can_heat,
             )
             plan = optimizer.optimize(
                 T_room=T,

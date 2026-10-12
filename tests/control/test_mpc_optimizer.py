@@ -860,3 +860,30 @@ def test_forced_min_run_continuation_plans_gentle_power():
     assert plan.power_fractions[0] == 1.0
     assert all(MIN_POWER_FRACTION <= pf < 1.0 for pf in plan.power_fractions[2:6])
     assert min(plan.temperatures[:7]) > 23.0  # full power reached ~21.4 by the end of the run
+
+
+def test_ufh_room_with_a_split_learned_rate_still_heats_far_below_target():
+    """UFH + split: the EKF shares one heating rate between screed and split (12.7 K/h here,
+    read from the sim at the lockout). Judging a UFH run at full power for the whole min run
+    plus afterglow predicted a 4 K overshoot, so idle won at 18.9 °C against 21 for hours."""
+    model = RCModel(C=1.0, U=0.0108, Q_heat=12.68, Q_cool=4.0, Q_solar=2.48)
+    kwargs = {
+        "can_heat": True,
+        "can_cool": False,
+        "w_comfort": 7.0,
+        "w_energy": 3.0,
+        "min_run_blocks": 6,
+        "heating_system_type": "underfloor",
+    }
+    series = {
+        "T_room": 18.9,
+        "T_outdoor_series": [-0.73] * 30,
+        "heat_target_series": [21.0] * 30,
+        "cool_target_series": [24.0] * 30,
+        "dt_minutes": 5,
+    }
+    mixed = MPCOptimizer(model, fast_heater_shares_model=True, **kwargs).optimize(**series)
+    assert mixed.actions[0] == MODE_HEATING
+    # a pure UFH room keeps the full-power run judgement (rate learned from the screed)
+    pure = MPCOptimizer(model, **kwargs).optimize(**series)
+    assert pure.actions[0] == "idle"
