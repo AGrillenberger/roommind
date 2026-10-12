@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from bisect import bisect_right
-from collections import deque
+from collections import Counter, deque
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from .load import RunData
 
@@ -17,6 +19,7 @@ def compute_metrics(run: RunData) -> dict[str, Any]:
         "duration_h": round(duration_h, 3),
         "rooms": {area: _room_metrics(run, area) for area in run.scenario.rooms},
         "devices": {eid: _device_metrics(run, eid, duration_h) for eid in _device_ids(run)},
+        "covers": {c.entity_id: _cover_metrics(run, c.entity_id, c.room) for c in _covers(run)},
         "model": _model_metrics(run),
     }
 
@@ -189,6 +192,62 @@ def _device_metrics(run: RunData, eid: str, duration_h: float) -> dict[str, Any]
         "active_h": round(active_h, 2),
         "electric_kwh": round(electric_wh / 1000, 3),
         "heat_kwh": round(heat_wh / 1000, 3),
+    }
+
+
+def _covers(run: RunData) -> list[Any]:
+    return [c for r in run.scenario.rooms.values() for c in r.covers]
+
+
+COVER_SHADED_BELOW = 90  # position (%) below which a cover counts as shading
+SUNNY_GHI_W_M2 = 600.0  # daily GHI peak that makes a day "sunny"
+SUNNY_HOURS = (11, 17)  # local hours in which a sunny day should see shading
+
+
+def _cover_metrics(run: RunData, eid: str, area: str) -> dict[str, Any]:
+    """Moves RoomMind commanded and how the cover shaded, per local calendar day.
+
+    Manual moves from the timeline are world actions, not service calls, so only
+    RoomMind's own commands count. ``sunny_days_unshaded`` counts days with a GHI
+    peak of at least ``SUNNY_GHI_W_M2`` on which the cover never shaded within
+    ``SUNNY_HOURS``; ``shaded_while_heating_h`` the hours a shading cover overlapped
+    with RoomMind reporting the room as heating.
+    """
+    tz = ZoneInfo(run.scenario.location.time_zone)
+
+    def day(t: float) -> str:
+        return datetime.fromtimestamp(t, tz).date().isoformat()
+
+    cmds = [c for c in run.commands if c["entity_id"] == eid and str(c.get("result", "")).startswith("accepted")]
+    per_day = Counter(day(c["t"]) for c in cmds)
+    shaded_h = heating_h = 0.0
+    ghi_peak: dict[str, float] = {}
+    shaded_days: set[str] = set()
+    prev: tuple[float, bool] | None = None
+    for s in run.samples:
+        d = day(s["t"])
+        ghi_peak[d] = max(ghi_peak.get(d, 0.0), s.get("outdoor", {}).get("ghi", 0.0))
+        cover = s.get("covers", {}).get(eid)
+        shaded = cover is not None and cover["position"] < COVER_SHADED_BELOW
+        if shaded and SUNNY_HOURS[0] <= datetime.fromtimestamp(s["t"], tz).hour < SUNNY_HOURS[1]:
+            shaded_days.add(d)
+        if prev is not None and prev[1]:
+            dt_h = (s["t"] - prev[0]) / 3600
+            shaded_h += dt_h
+            obs = run.observer_at(prev[0])
+            if obs is not None and (obs["rooms"].get(area) or {}).get("mode") == "heating":
+                heating_h += dt_h
+        prev = (s["t"], shaded)
+    sunny = [d for d, peak in ghi_peak.items() if peak >= SUNNY_GHI_W_M2]
+    days = max((run.end - run.start) / 86400, 1e-9)
+    return {
+        "commands": len(cmds),
+        "commands_per_day": round(len(cmds) / days, 2),
+        "max_commands_per_day": max(per_day.values(), default=0),
+        "shaded_h": round(shaded_h, 2),
+        "shaded_while_heating_h": round(heating_h, 2),
+        "sunny_days": len(sunny),
+        "sunny_days_unshaded": sum(1 for d in sunny if d not in shaded_days),
     }
 
 

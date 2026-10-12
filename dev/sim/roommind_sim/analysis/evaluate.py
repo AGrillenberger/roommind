@@ -114,6 +114,9 @@ def _metric(run: RunData, metrics: dict[str, Any], exp: dict[str, Any]) -> dict[
     elif group == "device":
         scope = metrics["devices"].get(exp.get("entity_id", ""), {})
         label += f"[{exp.get('entity_id')}]"
+    elif group == "cover":
+        scope = metrics.get("covers", {}).get(exp.get("entity_id", ""), {})
+        label += f"[{exp.get('entity_id')}]"
     elif group == "model":
         scope = metrics["model"].get(exp.get("room", ""), {})
         label += f"[{exp.get('room')}]"
@@ -198,6 +201,12 @@ def _lines(metrics: dict[str, Any], warnings: list[dict[str, Any]]) -> list[str]
         lines.append(
             f"device {eid}: {m['commands']} cmds ({m['commands_per_hour']}/h, {m['redundant_commands']} no-op, {m['rejected_commands']} rejected), "
             f"{m['device_starts']} starts, active {m['active_h']} h, {m['electric_kwh']} kWh el"
+        )
+    for eid, m in metrics.get("covers", {}).items():
+        lines.append(
+            f"cover {eid}: {m['commands']} cmds (max {m['max_commands_per_day']}/day), shaded {m['shaded_h']} h "
+            f"({m['shaded_while_heating_h']} h while heating), "
+            f"{m['sunny_days_unshaded']} of {m['sunny_days']} sunny days unshaded"
         )
     for area, m in metrics["model"].items():
         if m["learned_alpha_per_h"] is not None:

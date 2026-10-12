@@ -6,7 +6,7 @@ import pytest
 from helpers import scenario
 
 from roommind_sim.analysis.load import RunData
-from roommind_sim.analysis.metrics import _room_metrics, _truth_beta_s
+from roommind_sim.analysis.metrics import _cover_metrics, _room_metrics, _truth_beta_s
 from roommind_sim.scenario import load_scenario_dict
 
 
@@ -116,3 +116,60 @@ def test_hold_while_preheating_is_measured_against_the_coming_target():
     hold = [False, False, True, False]
     m = _room_metrics(_run(temps, heat, hold, step_s=600), "r")
     assert m["hold_heat_over_max_k"] == 0.0
+
+
+def _cover_run(hours: int, position: dict[int, int], ghi: dict[int, float], heating: set[int]) -> RunData:
+    """Hourly samples from the scenario start (00:00 local, 2026-01-12); dicts map hour -> value."""
+    rooms = {"r": {"windows": [{"orientation": "S", "area_m2": 2}], "covers": [{"entity_id": "cover.r"}]}}
+    scn = load_scenario_dict(scenario(rooms))
+    t0 = scn.start
+    pos = 100
+    samples, observer = [], []
+    for h in range(hours + 1):
+        pos = position.get(h, pos)
+        t = t0 + 3600 * h
+        samples.append({"t": t, "outdoor": {"ghi": ghi.get(h, 0.0)}, "covers": {"cover.r": {"position": pos}}})
+        observer.append({"t": t, "rooms": {"r": {"mode": "heating" if h in heating else "idle"}}})
+    events = [
+        {
+            "t": t0 + 3600 * h,
+            "type": "command",
+            "entity_id": "cover.r",
+            "service": "set_cover_position",
+            "data": {"position": p},
+            "result": "accepted",
+        }
+        for h, p in position.items()
+    ]
+    events.append(
+        {
+            "t": t0 + 3600 * 2,
+            "type": "command",
+            "entity_id": "cover.r",
+            "service": "set_cover_position",
+            "data": {"position": 5},
+            "result": "rejected",
+        }
+    )
+    return RunData(None, scn, samples, observer, events, t0 + 3600 * hours, {})  # type: ignore[arg-type]
+
+
+def test_cover_metrics_count_moves_and_shading_per_local_day():
+    # day 1 sunny, shaded 12-15 (3 h, one of them while heating); day 2 sunny, never shaded in the afternoon
+    run = _cover_run(48, {12: 40, 15: 100, 30: 60, 31: 100}, {13: 700.0, 37: 650.0}, heating={14})
+    m = _cover_metrics(run, "cover.r", "r")
+    assert m["commands"] == 4  # the rejected one does not count
+    assert m["max_commands_per_day"] == 2
+    assert m["commands_per_day"] == pytest.approx(2.0)
+    assert m["shaded_h"] == pytest.approx(4.0)
+    assert m["shaded_while_heating_h"] == pytest.approx(1.0)
+    assert m["sunny_days"] == 2
+    assert m["sunny_days_unshaded"] == 1
+
+
+def test_cover_metrics_without_sun_or_moves():
+    m = _cover_metrics(_cover_run(24, {}, {12: 300.0}, heating=set()), "cover.r", "r")
+    assert m["commands"] == 0
+    assert m["max_commands_per_day"] == 0
+    assert m["shaded_h"] == 0.0
+    assert m["sunny_days"] == 0

@@ -619,9 +619,9 @@ def cmd_compare(args: argparse.Namespace) -> int:
     b = json.loads((b_dir / "summary.json").read_text())
     print(f"A: {a_dir.name}  ({(a.get('source') or {}).get('git', '?')})")
     print(f"B: {b_dir.name}  ({(b.get('source') or {}).get('git', '?')})")
-    for group in ("rooms", "devices", "model"):
-        for name, ma in a["metrics"][group].items():
-            mb = b["metrics"][group].get(name, {})
+    for group in ("rooms", "devices", "covers", "model"):
+        for name, ma in a["metrics"].get(group, {}).items():
+            mb = b["metrics"].get(group, {}).get(name, {})
             rows = []
             for key, va in ma.items():
                 vb = mb.get(key)
@@ -630,7 +630,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
                     pct = f" ({100 * delta / va:+.0f}%)" if va else ""
                     rows.append(f"    {key:22} {va:>10} -> {vb:<10} {delta:+.3g}{pct}")
             if rows:
-                print(f"  {dict(rooms='room', devices='device', model='model')[group]} {name}")
+                print(f"  {dict(rooms='room', devices='device', covers='cover', model='model')[group]} {name}")
                 print("\n".join(rows))
     ea = {e["label"]: e["passed"] for e in a.get("expectations", [])}
     for e in b.get("expectations", []):

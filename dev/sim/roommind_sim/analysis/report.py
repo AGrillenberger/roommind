@@ -115,6 +115,7 @@ def _metrics_tables(metrics: dict[str, Any]) -> str:
         "<h2>Kennzahlen</h2>"
         + table("Räume", metrics["rooms"])
         + table("Geräte", metrics["devices"])
+        + table("Behänge", metrics.get("covers", {}))
         + table("Thermisches Modell (RoomMind EKF vs. Simulation)", metrics["model"])
     )
 
