@@ -40,6 +40,8 @@ def test_same_seed_same_timeline(tmp_path: Path) -> None:
     home = tmp_path / "home"
     (home / "venvs").mkdir(parents=True)
     (home / "venvs" / VENV.name).symlink_to(VENV)
+    for name in ("ports.json", "ports.lock"):  # share port leases with runs of other checkouts
+        (home / name).symlink_to(REAL_HOME / name)
     a, b = _run(home), _run(home)
     assert first_divergence(a, b) is None
     commands = [
@@ -101,3 +103,11 @@ def test_seed_randint_is_per_seed_and_per_module() -> None:
     assert first.stdout == second.stdout
     a, b = first.stdout.split("] [")
     assert a != b, "each calling module draws from its own generator"
+
+
+def test_turbo_restart_resumes_after_fixed_downtime(capsys: pytest.CaptureFixture[str]) -> None:
+    from roommind_sim.boot import RESTART_DOWNTIME_S, turbo_resume_mono
+
+    assert turbo_resume_mono(86400.0, 86400.003) == 86400.0 + RESTART_DOWNTIME_S
+    assert turbo_resume_mono(86400.0, 86400.0 + RESTART_DOWNTIME_S + 3) == 86400.0 + RESTART_DOWNTIME_S + 3
+    assert "not reproducible" in capsys.readouterr().err

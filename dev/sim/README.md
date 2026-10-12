@@ -136,6 +136,10 @@ runs one simulated day twice.
 - Samples and timeline actions first step the physics to the current instant. asyncio
   orders timers due at the same instant by heap shape, so otherwise a sample saw the
   previous physics step on some runs and the current one on others.
+- An in-run `ha.restart` in turbo resumes after a fixed 5 s of virtual downtime
+  (`boot.RESTART_DOWNTIME_S`); the shutdown runs in real time and used to shift
+  everything after the restart by a few milliseconds. A shutdown that takes longer
+  prints a warning and stays unreproducible.
 - Not reproducible: live instances in scaled or real time, the shutdown after the end of
   a batch run (real time, ignored by the check) and runs with `--recorder` (not checked).
   Changed RoomMind code may reorder other timers due at the same instant; that is part of

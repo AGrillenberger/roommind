@@ -17,6 +17,9 @@ from pathlib import Path
 from . import clock as clockmod
 
 RESTART_EXIT_CODE = 100
+# Virtual downtime of an in-run restart in turbo. The shutdown itself runs in real time,
+# so a fixed value keeps the restart point (and everything after it) reproducible.
+RESTART_DOWNTIME_S = 5.0
 STATE_FILE = "clock.json"
 _THEN = {
     "realtime": (clockmod.SCALED, 1.0),
@@ -75,6 +78,8 @@ def main(argv: list[str] | None = None) -> int:
         plan = json.loads(_read_raw(plan_file))
         for key in ("mode", "factor", "target", "then_mode", "then_action"):
             state[key] = plan.get(key)
+        if plan.get("mode") == clockmod.TURBO:
+            state["mono"] = turbo_resume_mono(float(plan["mono"]), float(state["mono"]))
         os.unlink(plan_file)
     _write_raw(state_file, json.dumps(state))
     if exit_code == RESTART_EXIT_CODE:
@@ -83,6 +88,20 @@ def main(argv: list[str] | None = None) -> int:
             [sys.executable, "-m", "roommind_sim.boot", "--instance-dir", str(inst_dir), "--resumed"],
         )
     return exit_code
+
+
+def turbo_resume_mono(stopped_at: float, after_shutdown: float) -> float:
+    """Virtual time to resume at after a restart that was requested in turbo."""
+    resume = stopped_at + RESTART_DOWNTIME_S
+    if after_shutdown > resume:
+        print(
+            f"clock: shutdown took {after_shutdown - stopped_at:.1f}s, more than the fixed "
+            f"{RESTART_DOWNTIME_S:.0f}s restart downtime; this restart is not reproducible",
+            file=sys.stderr,
+            flush=True,
+        )
+        return after_shutdown
+    return resume
 
 
 def seed_randint(seed: int) -> None:

@@ -249,12 +249,14 @@ class SimRuntime:
             # Shutdown waits on real timeouts; in turbo they would jump hours ahead. Run
             # the shutdown in real time and let boot restore the plan (mode/target) after.
             plan = clk.state()
+            self.event("ha", {"what": "stopping"})
             await self.hass.async_add_executor_job(_write_state, self.dir / "state", None, None, None, plan)
             clk.set_mode(clockmod.SCALED, 1.0)
+        else:
+            self.event("ha", {"what": "stopping"})
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
-        self.event("ha", {"what": "stopping"})
         await self.async_persist()
 
     # --- provisioning -----------------------------------------------------------------------
