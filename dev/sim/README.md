@@ -41,7 +41,7 @@ never in the repository.
 |---|---|
 | `sim run <scenario> [--set k=v] [--until 3d] [--roommind-src v1.7.7]` | Fresh instance, turbo to the end, evaluate. Exit 0 pass / 1 fail / 2 invalid scenario / 3 HA crashed |
 | `sim suite [-j N] [--tag t] [--roommind-src ref]` | All scenarios in `scenarios/` |
-| `sim compare <run-a> <run-b>` | Metric diff, e.g. a git ref against your working tree |
+| `sim compare <run-a> <run-b> [--timeline]` | Metric diff, e.g. a git ref against your working tree; `--timeline` also checks record by record (determinism) |
 | `sim report [run]` | Re-evaluate a run (`last` by default) |
 | `sim up [name] --scenario X [--catch-up] [--speed 60] [--paused] [--from-run R] [--ttl 2h]` | Live instance with UI, reachable on the LAN without password (trusted networks) |
 | `sim clock <name> ff 6h \| speed 60 \| pause \| realtime \| until <ISO>` | Control the clock of a live instance |
@@ -120,6 +120,26 @@ history; older exports work with more assumptions) and writes a scenario to
 
 Everything the export does not contain (window orientation, device behaviour, presence
 plans) is guessed and listed under `assumptions:` in the generated scenario.
+
+## Reproducibility
+
+A batch run is deterministic: the same scenario, `seed` and code give identical
+timelines (commands, samples, observer) and therefore identical metrics, so a
+before/after comparison shows only the effect of the change. `sim compare A B --timeline`
+checks this and prints the first differing record (exit 1); `tests/test_determinism.py`
+runs one simulated day twice.
+
+- HA staggers its update coordinators and time trackers by a random 0.05–0.5 s
+  (`random.randint`). `boot.seed_randint` derives these draws from the scenario `seed`,
+  one generator per calling module. `--set seed=N` changes them together with weather
+  and sensor noise, which is the way to look at the spread on purpose.
+- Samples and timeline actions first step the physics to the current instant. asyncio
+  orders timers due at the same instant by heap shape, so otherwise a sample saw the
+  previous physics step on some runs and the current one on others.
+- Not reproducible: live instances in scaled or real time, the shutdown after the end of
+  a batch run (real time, ignored by the check) and runs with `--recorder` (not checked).
+  Changed RoomMind code may reorder other timers due at the same instant; that is part of
+  its effect, not noise.
 
 ## Limits
 

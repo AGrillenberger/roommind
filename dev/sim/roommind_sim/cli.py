@@ -637,7 +637,24 @@ def cmd_compare(args: argparse.Namespace) -> int:
         before = ea.get(e["label"])
         if before is not None and before != e["passed"]:
             print(f"  expectation {e['label']}: {'PASS' if before else 'FAIL'} -> {'PASS' if e['passed'] else 'FAIL'}")
+    if getattr(args, "timeline", False):
+        return _compare_timelines(a_dir, b_dir)
     return 0
+
+
+def _compare_timelines(a_dir: Path, b_dir: Path) -> int:
+    from .analysis.determinism import first_divergence
+
+    diff = first_divergence(a_dir, b_dir)
+    if diff is None:
+        print("  timelines identical")
+        return 0
+    rec = diff["a"] or diff["b"] or {}
+    when = _fmt_time(rec["t"]) if "t" in rec else "?"
+    print(f"  timelines differ: {diff['stream']} record {diff['index']} at {when}")
+    print(f"    A {json.dumps(diff['a'], sort_keys=True)[:600]}")
+    print(f"    B {json.dumps(diff['b'], sort_keys=True)[:600]}")
+    return 1
 
 
 def cmd_report(args: argparse.Namespace) -> int:
@@ -794,6 +811,11 @@ def _parser() -> argparse.ArgumentParser:
     compare = sub.add_parser("compare", help="metric diff of two runs (names, paths or 'last')")
     compare.add_argument("a")
     compare.add_argument("b")
+    compare.add_argument(
+        "--timeline",
+        action="store_true",
+        help="also compare the timelines record by record (determinism check, exit 1 on a difference)",
+    )
     compare.set_defaults(func=cmd_compare)
 
     report = sub.add_parser("report", help="re-evaluate a run (name, path or 'last')")
