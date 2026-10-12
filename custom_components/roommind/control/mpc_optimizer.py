@@ -5,8 +5,15 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from ..const import HEATING_SYSTEM_PROFILES, MIN_POWER_FRACTION, MODE_COOLING, MODE_HEATING, MODE_IDLE
-from .residual_heat import compute_residual_heat
+from ..const import (
+    HEATING_SYSTEM_PROFILES,
+    MIN_POWER_FRACTION,
+    MODE_COOLING,
+    MODE_HEATING,
+    MODE_IDLE,
+    SLOW_SYSTEM_START_PENALTY,
+)
+from .residual_heat import compute_residual_heat, get_min_run_blocks
 from .thermal_model import RCModel
 
 # Base lookahead for per-block decision cost evaluation. Radiator / unknown
@@ -16,6 +23,15 @@ LOOKAHEAD_BASE_BLOCKS = 6
 # 1.0 so UFH lookahead (24 blocks = 120 min) matches the outer horizon minimum,
 # avoiding silent clamping. See issue #131.
 LOOKAHEAD_HORIZON_SCALE = 1.0
+
+
+def slow_start_penalty(min_run_blocks: int, dt_minutes: float = 5.0) -> float:
+    """``MPCOptimizer.start_penalty`` for a run of *min_run_blocks*: only slow systems pay for starts.
+
+    A minimum run longer than the default marks a slow heating system (UFH). Fast
+    systems get a start hysteresis in the controller instead (#429).
+    """
+    return SLOW_SYSTEM_START_PENALTY if min_run_blocks > get_min_run_blocks("", dt_minutes) else 0.0
 
 
 @dataclass
@@ -64,6 +80,7 @@ class MPCOptimizer:
     override_active: bool = False
     heating_system_type: str = ""  # key into HEATING_SYSTEM_PROFILES; "" = unknown
     approach_rate: float = 1.0  # fraction of remaining gap closed per block; 1.0 = legacy deadbeat
+    start_penalty: float = 0.0  # comfort-weighted cost of starting a heating/cooling run (#429)
 
     def __post_init__(self) -> None:
         # Set before optimize() runs so callers / patched optimize() still expose
@@ -81,6 +98,7 @@ class MPCOptimizer:
         solar_series: list[float] | None = None,
         residual_series: list[float] | None = None,
         occupancy_series: list[float] | None = None,
+        initial_mode: str = MODE_IDLE,
     ) -> MPCPlan:
         """Find optimal action sequence over the planning horizon.
 
@@ -90,6 +108,10 @@ class MPCOptimizer:
         Accepts dual target series (heat_target_series + cool_target_series)
         for dead-band-aware optimization. If cool_target_series is None,
         it defaults to heat_target_series (single-target behavior).
+
+        With ``start_penalty`` set, choosing an active mode the previous block did
+        not run costs ``w_comfort * start_penalty``; ``initial_mode`` is the mode
+        running when the plan is built, so continuing it in block 0 is free.
         """
         if cool_target_series is None:
             cool_target_series = list(heat_target_series)
@@ -127,6 +149,7 @@ class MPCOptimizer:
         current_temp = T_room
         current_mode = MODE_IDLE
         blocks_in_mode = 0
+        last_action = initial_mode
 
         for i in range(n_blocks):
             T_out = T_outdoor_series[i]
@@ -171,6 +194,8 @@ class MPCOptimizer:
                         future_residual=future_residual,
                         future_occupancy=future_occupancy,
                     )
+                    if self.start_penalty and action not in (MODE_IDLE, last_action):
+                        cost += self.w_comfort * self.start_penalty
                     if cost < best_cost:
                         best_cost = cost
                         best_action = action
@@ -210,6 +235,7 @@ class MPCOptimizer:
             )
             next_temp = max(self.temp_min, min(next_temp, self.temp_max))
 
+            last_action = best_action
             actions.append(best_action)
             temperatures.append(round(next_temp, 2))
             power_fractions.append(round(pf, 3))

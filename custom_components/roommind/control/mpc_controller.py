@@ -57,7 +57,7 @@ from ..utils.device_utils import (
     has_reliable_hvac_modes,
 )
 from ..utils.temp_utils import celsius_delta_to_ha, celsius_to_ha_temp
-from .mpc_optimizer import MPCOptimizer, MPCPlan
+from .mpc_optimizer import MPCOptimizer, MPCPlan, slow_start_penalty
 from .residual_heat import get_min_run_blocks
 from .thermal_model import RoomModelManager
 
@@ -1128,6 +1128,7 @@ class MPCController:
             override_active=is_override_active(self.room_config),
             heating_system_type=self._heating_system_type,
             approach_rate=self._approach_rate,
+            start_penalty=slow_start_penalty(min_run, PLAN_DT_MINUTES),
         )
 
         plan = optimizer.optimize(
@@ -1139,6 +1140,7 @@ class MPCController:
             solar_series=solar_series,
             residual_series=residual_series,
             occupancy_series=occupancy_series,
+            initial_mode=self.previous_mode,
         )
         self.last_plan = plan
         # Shading can attenuate solar gain, never the body heat of whoever just

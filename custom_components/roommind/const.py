@@ -93,6 +93,10 @@ PROPORTIONAL_DEADBAND_C = 0.5  # Minimum proportional setpoint change (°C) to r
 PROPORTIONAL_DEADBAND_NEAR_TARGET_C = 0.2  # Finer proportional deadband (°C) within 1°C of target
 PROPORTIONAL_SETPOINT_DWELL_SECONDS = 300  # Minimum time a proportional setpoint stays on the device before a recomputed one replaces it (one MPC block, #317)
 BOOST_CAP_FALLBACK_STEP = 0.5  # Distance kept below a device's max_temp for proportional heating setpoints when it reports no target_temp_step (#396)
+# Comfort-weighted cost (°C² equivalent) of starting a run, for slow heating systems (UFH) only.
+# Fast systems get a start hysteresis in the controller; UFH keeps the optimizer's decisions
+# and toggled heat/idle every 30 s cycle at the target without it (#429).
+SLOW_SYSTEM_START_PENALTY = 1.0
 
 # Update interval in seconds
 UPDATE_INTERVAL = 30

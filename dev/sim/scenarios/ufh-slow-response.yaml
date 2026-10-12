@@ -4,7 +4,7 @@ description: >
   hours of lag and keeps heating after switch-off. Checks comfort around schedule
   changes, overshoot from residual heat and whether the EKF learns a plausible
   time constant instead of attributing slab heat to the sun (#35, #115, #131).
-refs: [35, 115, 131]
+refs: [35, 115, 131, 429]
 tags: [ufh, mpc, model]
 start: 2026-01-12T00:00
 duration: 7d
@@ -45,4 +45,5 @@ expect:
   - {metric: model.learned_alpha_per_h, room: wohnzimmer, min: 0.005, max: 0.02}
   - {metric: model.learned_beta_s, room: wohnzimmer, max: 8, label: slab heat not booked as solar gain (truth ~3.4)}
   - {metric: room.temp_max, room: wohnzimmer, max: 23.5}
+  - {metric: device.shortest_run_min, entity_id: climate.wohnzimmer_fbh, min: 15, label: no heat/idle toggling at the target (#429)}
   - {invariant: target_never_empty}
