@@ -1,0 +1,17 @@
+name: ufh-direct-altbau
+extends: ufh-slow-response
+description: >
+  Underfloor heating with a direct-mode thermostat in a poorly insulated old building.
+  The slab needs hours to lift the room, so MPC has to pre-heat ahead of the 06:00
+  comfort block. A direct device regulates on the value it gets: it must receive the
+  upcoming comfort target while MPC pre-heats, not the eco target in force, otherwise
+  the floor only starts heating when the block begins.
+refs: [35, 131]
+tags: [ufh, mpc, direct]
+house:
+  building: altbau_unsaniert
+expect:
+  - {metric: comfort.undershoot_kh, room: wohnzimmer, max: 60, label: direct thermostat gets the comfort target while MPC pre-heats (84 Kh before)}
+  - {metric: comfort.heat_overshoot_kh, room: wohnzimmer, max: 15}
+  - {metric: room.temp_max, room: wohnzimmer, max: 23.5}
+  - {invariant: target_never_empty}
