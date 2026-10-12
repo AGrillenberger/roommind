@@ -28,6 +28,7 @@ def _device_ids(run: RunData) -> list[str]:
 HEAT_BAND_K = 0.5
 COAST_REWARM_K = 0.3
 PREHEAT_LOOKAHEAD_S = 3 * 3600
+HOLD_REF_LOOKBACK_S = 1800
 
 
 def _upcoming_heat(run: RunData, area: str) -> list[tuple[float, float | None]]:
@@ -61,6 +62,12 @@ def _room_metrics(run: RunData, area: str) -> dict[str, Any]:
     warms ``COAST_REWARM_K`` above its lowest point since the drop, so heating
     during a setback still counts as overshoot. ``heat_above_band_kh`` keeps the
     plain total above the current target + band for comparison with older runs.
+
+    ``hold_heat_over_max_k`` / ``hold_heat_over_kh`` cover only the compressor min-run
+    hold (room idle, protection active): how far the held unit carried the room past
+    its heat target. The reference is the highest heat target from
+    ``HOLD_REF_LOOKBACK_S`` before to ``PREHEAT_LOOKAHEAD_S`` after, so neither a hold
+    that runs into a setback nor one during pre-heating is booked against the eco target.
     """
     under = over = over_heat = coast_kh = above_band = in_band = covered = 0.0
     upcoming = _upcoming_heat(run, area)
@@ -68,6 +75,8 @@ def _room_metrics(run: RunData, area: str) -> dict[str, Any]:
     prev_ref: float | None = None
     coast_min: float | None = None
     pred_err: list[float] = []
+    hold_max = hold_kh = 0.0
+    recent_heat: deque[tuple[float, float]] = deque()
     prev_t = None
     for s in run.samples:
         if prev_t is None:
@@ -82,6 +91,12 @@ def _room_metrics(run: RunData, area: str) -> dict[str, Any]:
             continue
         heat = room.get("heat_target")
         cool = room.get("cool_target")
+        if heat is not None:
+            while recent_heat and recent_heat[-1][1] <= heat:
+                recent_heat.pop()
+            recent_heat.append((s["t"], heat))
+        while recent_heat and recent_heat[0][0] < s["t"] - HOLD_REF_LOOKBACK_S:
+            recent_heat.popleft()
         if heat is None and cool is None:
             continue
         covered += dt_h
@@ -91,6 +106,10 @@ def _room_metrics(run: RunData, area: str) -> dict[str, Any]:
             above_band += max(0.0, t_air - heat - HEAT_BAND_K) * dt_h
             k = bisect_right(upcoming_t, s["t"]) - 1
             ref = max(heat, upcoming[k][1] or heat) if k >= 0 else heat
+            if room.get("compressor_protection_active") and room.get("mode") == "idle":
+                hold_ref = max(ref, recent_heat[0][1])
+                hold_max = max(hold_max, t_air - hold_ref)
+                hold_kh += max(0.0, t_air - hold_ref - HEAT_BAND_K) * dt_h
             if prev_ref is not None and ref < prev_ref and t_air > ref + HEAT_BAND_K:
                 coast_min = t_air
             prev_ref = ref
@@ -123,6 +142,8 @@ def _room_metrics(run: RunData, area: str) -> dict[str, Any]:
         "heat_overshoot_kh": round(over_heat, 3),
         "heat_coast_kh": round(coast_kh, 3),
         "heat_above_band_kh": round(above_band, 3),
+        "hold_heat_over_max_k": round(hold_max, 2),
+        "hold_heat_over_kh": round(hold_kh, 3),
         "in_band_pct": round(100 * in_band / covered, 1) if covered else None,
         "temp_min": round(min(temps), 2) if temps else None,
         "temp_max": round(max(temps), 2) if temps else None,

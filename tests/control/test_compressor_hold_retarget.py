@@ -65,7 +65,7 @@ async def _run_active(hass, ctrl, mode, targets, **kwargs):
             state.attributes["temperature"] = shown
 
 
-async def _start_then_hold(hass, ctrl, held_targets, *, current_temp=22.5, started_with=COMFORT):
+async def _start_then_hold(hass, ctrl, held_targets, *, current_temp=21.3, started_with=COMFORT):
     """Heat with *started_with*, then hold for min-run with *held_targets*; returns what the hold sent."""
     await _run_active(hass, ctrl, MODE_HEATING, started_with, current_temp=19.0)
     hass.services.async_call.reset_mock()
@@ -83,7 +83,7 @@ async def test_unchanged_target_sends_nothing():
 async def test_without_an_active_command_on_record_sends_nothing():
     """After a reload the previous target is unknown: stay silent, as for a reached target."""
     hass, ctrl = _setup(_state())
-    await ctrl.async_apply(MODE_IDLE, TargetTemps(heat=17.0, cool=27.0), current_temp=19.5, compressor_forced_on=HELD)
+    await ctrl.async_apply(MODE_IDLE, TargetTemps(heat=17.0, cool=27.0), current_temp=17.3, compressor_forced_on=HELD)
     assert _sent(hass) == []
 
 
@@ -123,7 +123,7 @@ async def test_other_side_changing_does_not_drop_a_heating_unit():
 @pytest.mark.asyncio
 async def test_cooling_unit_follows_the_cool_side_only():
     hass, ctrl = _setup(_state("cool", temperature=16.0))
-    assert await _start_then_hold(hass, ctrl, TargetTemps(heat=17.0, cool=27.0)) == []
+    assert await _start_then_hold(hass, ctrl, TargetTemps(heat=17.0, cool=27.0), current_temp=26.8) == []
     hass.services.async_call.reset_mock()
     await ctrl.async_apply(MODE_IDLE, TargetTemps(heat=17.0, cool=29.0), current_temp=28.0, compressor_forced_on=HELD)
     assert [c["temperature"] for c in _sent(hass)] == [29.0]
@@ -150,9 +150,9 @@ async def test_raised_cooling_target_counts_for_a_cooling_unit_and_a_lowered_one
     hass, ctrl = _setup(_state("cool", temperature=16.0))
     await _run_active(hass, ctrl, "cooling", COMFORT, current_temp=29.0)
     hass.services.async_call.reset_mock()
-    await ctrl.async_apply(MODE_IDLE, TargetTemps(heat=21.0, cool=26.0), current_temp=25.0, compressor_forced_on=HELD)
+    await ctrl.async_apply(MODE_IDLE, TargetTemps(heat=21.0, cool=26.0), current_temp=25.8, compressor_forced_on=HELD)
     assert _sent(hass) == []
-    await ctrl.async_apply(MODE_IDLE, TargetTemps(heat=21.0, cool=29.0), current_temp=25.0, compressor_forced_on=HELD)
+    await ctrl.async_apply(MODE_IDLE, TargetTemps(heat=21.0, cool=29.0), current_temp=25.8, compressor_forced_on=HELD)
     assert [c["temperature"] for c in _sent(hass)] == [29.0]
 
 
@@ -256,19 +256,21 @@ async def test_single_point_target_needs_the_margin_before_the_cooling_hold_ends
 
 @pytest.mark.asyncio
 async def test_band_wider_than_the_margin_still_ends_at_the_cool_target():
+    """Past heat + margin the unit is throttled first; at the cool target it gets the plain target."""
     hass, ctrl = _setup(_state("heat"))
     band = TargetTemps(heat=21.0, cool=22.5)
-    assert await _start_then_hold(hass, ctrl, band, current_temp=22.4, started_with=band) == []
+    calls = await _start_then_hold(hass, ctrl, band, current_temp=22.4, started_with=band)
+    assert [c["temperature"] for c in calls] == [22.5]
     hass.services.async_call.reset_mock()
     await ctrl.async_apply(MODE_IDLE, band, current_temp=22.5, compressor_forced_on=HELD)
     assert [c["temperature"] for c in _sent(hass)] == [21.0]
 
 
 @pytest.mark.asyncio
-async def test_heating_hold_keeps_the_boost_inside_the_band():
+async def test_heating_hold_keeps_the_boost_up_to_the_margin():
     hass, ctrl = _setup(_state("heat"))
     band = TargetTemps(heat=21.0, cool=22.5)
-    assert await _start_then_hold(hass, ctrl, band, current_temp=22.4, started_with=band) == []
+    assert await _start_then_hold(hass, ctrl, band, current_temp=21.4, started_with=band) == []
 
 
 @pytest.mark.asyncio
@@ -297,7 +299,9 @@ async def test_heat_only_room_never_cares_about_the_cool_target():
     room = make_room(thermostats=[], acs=[AC], climate_mode="heat_only")
     hass, ctrl = _setup(_state("heat"), room=room)
     band = TargetTemps(heat=21.0, cool=22.5)
-    assert await _start_then_hold(hass, ctrl, band, current_temp=23.0, started_with=band) == []
+    # throttled to what the unit reads, never sent the bare target
+    calls = await _start_then_hold(hass, ctrl, band, current_temp=23.0, started_with=band)
+    assert [c["temperature"] for c in calls] == [23.0]
 
 
 @pytest.mark.asyncio
@@ -308,7 +312,7 @@ async def test_cool_only_room_never_cares_about_the_heat_target():
     await _run_active(hass, ctrl, "cooling", band, current_temp=26.0)
     hass.services.async_call.reset_mock()
     await ctrl.async_apply(MODE_IDLE, band, current_temp=20.0, compressor_forced_on=HELD)
-    assert _sent(hass) == []
+    assert [c["temperature"] for c in _sent(hass)] == [20.0]
 
 
 # --- heat_cool / auto: never a single value of the wrong side (#284) ---------------
@@ -523,7 +527,7 @@ async def test_reference_starts_from_a_running_unit_after_a_reload():
     eco = TargetTemps(heat=17.0, cool=27.0)
     await ctrl.async_apply(MODE_HEATING, COMFORT, power_fraction=1.0, current_temp=19.0)
     assert _sent(hass) == []
-    await ctrl.async_apply(MODE_IDLE, COMFORT, current_temp=22.0, compressor_forced_on=HELD)
+    await ctrl.async_apply(MODE_IDLE, COMFORT, current_temp=21.3, compressor_forced_on=HELD)
     assert _sent(hass) == []
     await ctrl.async_apply(MODE_IDLE, eco, current_temp=19.5, compressor_forced_on=HELD)
     assert [c["temperature"] for c in _sent(hass)] == [17.0]
@@ -545,7 +549,7 @@ async def test_seeding_never_replaces_a_remembered_reference():
 async def test_reload_in_the_middle_of_the_hold_seeds_the_reference_then_follows_eco():
     hass, ctrl = _setup(_state("heat"))
     eco = TargetTemps(heat=17.0, cool=27.0)
-    await ctrl.async_apply(MODE_IDLE, COMFORT, current_temp=22.0, compressor_forced_on=HELD)  # nothing remembered
+    await ctrl.async_apply(MODE_IDLE, COMFORT, current_temp=21.3, compressor_forced_on=HELD)  # nothing remembered
     assert _sent(hass) == []
     await ctrl.async_apply(MODE_IDLE, eco, current_temp=19.5, compressor_forced_on=HELD)
     assert [c["temperature"] for c in _sent(hass)] == [17.0]
@@ -596,4 +600,162 @@ async def test_failed_overshoot_send_is_retried_once_per_cycle():
     assert len(_sent(hass)) == 1
     hass.services.async_call.reset_mock()
     await ctrl.async_apply(MODE_IDLE, band, current_temp=22.8, compressor_forced_on=HELD)
+    assert _sent(hass) == []
+
+
+# --- past the near side: throttle to minimum instead of boosting on (heat_only/cool_only) --
+
+
+def _heat_only():
+    return make_room(thermostats=[], acs=[AC], climate_mode="heat_only")
+
+
+@pytest.mark.asyncio
+async def test_heat_only_hold_throttles_to_the_unit_reading_rounded_up():
+    """Room 0.6 K over target, unit reads 1.5 K warm: setpoint = its reading, up to the next step (#436)."""
+    hass, ctrl = _setup(
+        _state("heat", temperature=29.0, target_temp_step=1.0, current_temperature=23.1), room=_heat_only()
+    )
+    calls = await _start_then_hold(hass, ctrl, COMFORT, current_temp=21.6)
+    assert [c["temperature"] for c in calls] == [24.0]
+    assert "hvac_mode" not in calls[0]
+
+
+@pytest.mark.asyncio
+async def test_heat_only_hold_keeps_the_boost_within_the_margin():
+    hass, ctrl = _setup(_state("heat", current_temperature=22.9), room=_heat_only())
+    assert await _start_then_hold(hass, ctrl, COMFORT, current_temp=21.4) == []
+
+
+@pytest.mark.asyncio
+async def test_throttle_never_raises_a_small_held_setpoint():
+    """A held proportional setpoint below the unit's reading already runs at minimum: nothing to send."""
+    hass, ctrl = _setup(
+        _state("heat", temperature=23.0, target_temp_step=1.0, current_temperature=23.4), room=_heat_only()
+    )
+    assert await _start_then_hold(hass, ctrl, COMFORT, current_temp=21.8) == []
+
+
+@pytest.mark.asyncio
+async def test_throttle_never_goes_below_the_room_target_plus_offset():
+    room = _heat_only()
+    room["devices"][0].update(setpoint_mode="direct", setpoint_offset=1.0)
+    hass, ctrl = _setup(_state("heat", temperature=29.0, current_temperature=20.2), room=room)
+    calls = await _start_then_hold(hass, ctrl, COMFORT, current_temp=21.8)
+    assert [c["temperature"] for c in calls] == [22.0]
+
+
+@pytest.mark.asyncio
+async def test_throttle_without_a_unit_reading_uses_the_room():
+    hass, ctrl = _setup(_state("heat", temperature=29.0), room=_heat_only())
+    calls = await _start_then_hold(hass, ctrl, COMFORT, current_temp=22.2)
+    assert [c["temperature"] for c in calls] == [22.5]
+
+
+@pytest.mark.asyncio
+async def test_throttle_is_sent_once_per_hold_and_again_in_the_next_one():
+    """No following the room up and down (#416); a new hold may throttle again."""
+    hass, ctrl = _setup(_state("heat", current_temperature=23.0), room=_heat_only())  # never confirms
+    counts = []
+    await _run_active(hass, ctrl, MODE_HEATING, COMFORT, current_temp=19.0)
+    for temp in (21.6, 21.9, 21.2, 21.7):
+        hass.services.async_call.reset_mock()
+        await ctrl.async_apply(MODE_IDLE, COMFORT, current_temp=temp, compressor_forced_on=HELD)
+        counts.append(len(_sent(hass)))
+    assert counts == [1, 0, 0, 0]
+    await _run_active(hass, ctrl, MODE_HEATING, COMFORT, current_temp=19.0)
+    hass.services.async_call.reset_mock()
+    await ctrl.async_apply(MODE_IDLE, COMFORT, current_temp=21.6, compressor_forced_on=HELD)
+    assert len(_sent(hass)) == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_throttle_is_retried_next_cycle():
+    hass, ctrl = _setup(_state("heat", current_temperature=23.0), room=_heat_only())
+    await _run_active(hass, ctrl, MODE_HEATING, COMFORT, current_temp=19.0)
+    hass.services.async_call.side_effect = RuntimeError("device offline")
+    hass.services.async_call.reset_mock()
+    await ctrl.async_apply(MODE_IDLE, COMFORT, current_temp=21.6, compressor_forced_on=HELD)
+    assert len(_sent(hass)) == 1
+    hass.services.async_call.side_effect = None
+    hass.services.async_call.reset_mock()
+    await ctrl.async_apply(MODE_IDLE, COMFORT, current_temp=21.6, compressor_forced_on=HELD)
+    assert len(_sent(hass)) == 1
+
+
+@pytest.mark.asyncio
+async def test_no_throttle_after_a_lowered_target_went_out():
+    """The plain eco target is already below any throttle level; raising it again would undo the change."""
+    hass, ctrl = _setup(_state("heat", current_temperature=20.0), room=_heat_only())
+    eco = TargetTemps(heat=17.0, cool=27.0)
+    assert [c["temperature"] for c in await _start_then_hold(hass, ctrl, eco, current_temp=19.5)] == [17.0]
+    hass.services.async_call.reset_mock()
+    await ctrl.async_apply(MODE_IDLE, eco, current_temp=19.5, compressor_forced_on=HELD)
+    assert _sent(hass) == []
+
+
+@pytest.mark.asyncio
+async def test_cool_only_hold_throttles_to_the_unit_reading_rounded_down():
+    room = make_room(thermostats=[], acs=[AC], climate_mode="cool_only")
+    hass, ctrl = _setup(_state("cool", temperature=16.0, target_temp_step=1.0, current_temperature=22.6), room=room)
+    band = TargetTemps(heat=None, cool=24.0)
+    await _run_active(hass, ctrl, "cooling", band, current_temp=26.0)
+    hass.services.async_call.reset_mock()
+    await ctrl.async_apply(MODE_IDLE, band, current_temp=23.4, compressor_forced_on=HELD)
+    assert [c["temperature"] for c in _sent(hass)] == [22.0]
+    hass.services.async_call.reset_mock()
+    await ctrl.async_apply(MODE_IDLE, band, current_temp=23.6, compressor_forced_on=HELD)
+    assert _sent(hass) == []
+
+
+@pytest.mark.asyncio
+async def test_throttle_in_fahrenheit_uses_device_units():
+    hass, ctrl = _setup(
+        _state("heat", temperature=86.0, min_temp=61.0, max_temp=86.0, current_temperature=72.4),
+        room=_heat_only(),
+        fahrenheit=True,
+    )
+    calls = await _start_then_hold(hass, ctrl, COMFORT, current_temp=21.6)
+    # whole °F device: 72.4 rounds up to 73, above the 69.8 °F target
+    assert [c["temperature"] for c in calls] == [73.0]
+
+
+@pytest.mark.asyncio
+async def test_throttle_uses_the_last_sent_setpoint_when_the_unit_shows_none():
+    hass, ctrl = _setup(_state("heat", current_temperature=22.8), room=_heat_only())
+    hass.states.get(AC).attributes["temperature"] = None
+    calls = await _start_then_hold(hass, ctrl, COMFORT, current_temp=21.6)
+    assert [c["temperature"] for c in calls] == [23.0]
+
+
+@pytest.mark.asyncio
+async def test_throttle_without_any_known_setpoint_sends_nothing():
+    hass, ctrl = _setup(_state("heat", current_temperature=22.8), room=_heat_only())
+    hass.states.get(AC).attributes["temperature"] = None
+    await ctrl.async_apply(MODE_IDLE, COMFORT, current_temp=21.6, compressor_forced_on=HELD)
+    assert _sent(hass) == []
+
+
+@pytest.mark.asyncio
+async def test_throttle_skips_an_unreadable_unit_value():
+    hass, ctrl = _setup(_state("heat", current_temperature="n/a"), room=_heat_only())
+    assert await _start_then_hold(hass, ctrl, COMFORT, current_temp=21.6) == []
+
+
+@pytest.mark.asyncio
+async def test_throttle_needs_the_target_of_the_regulated_side():
+    hass, ctrl = _setup(_state("heat", current_temperature=23.0), room=_heat_only())
+    assert await _start_then_hold(hass, ctrl, TargetTemps(heat=None, cool=27.0), current_temp=21.6) == []
+    await ctrl._async_hold_modulate(AC, hass.states.get(AC), TargetTemps(heat=None, cool=27.0), 21.6)
+    assert _sent(hass) == []
+
+
+@pytest.mark.asyncio
+async def test_cooling_throttle_never_lowers_a_mild_held_setpoint():
+    room = make_room(thermostats=[], acs=[AC], climate_mode="cool_only")
+    hass, ctrl = _setup(_state("cool", temperature=22.0, target_temp_step=1.0, current_temperature=22.4), room=room)
+    band = TargetTemps(heat=None, cool=24.0)
+    await _run_active(hass, ctrl, "cooling", band, current_temp=26.0)
+    hass.services.async_call.reset_mock()
+    await ctrl.async_apply(MODE_IDLE, band, current_temp=23.2, compressor_forced_on=HELD)
     assert _sent(hass) == []

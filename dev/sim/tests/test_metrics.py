@@ -10,15 +10,27 @@ from roommind_sim.analysis.metrics import _room_metrics, _truth_beta_s
 from roommind_sim.scenario import load_scenario_dict
 
 
-def _run(temps: list[float], heat: list[float]) -> RunData:
-    """One sample per hour; the first one only opens the interval and is not integrated."""
+def _run(temps: list[float], heat: list[float], hold: list[bool] | None = None, step_s: int = 3600) -> RunData:
+    """One sample per step; the first one only opens the interval and is not integrated."""
     scn = load_scenario_dict(scenario({"r": {}}))
     t0 = scn.start
-    samples = [{"t": t0 + 3600 * i, "rooms": {"r": {"t_air": temp}}} for i, temp in enumerate(temps)]
+    held = hold or [False] * len(temps)
+    samples = [{"t": t0 + step_s * i, "rooms": {"r": {"t_air": temp}}} for i, temp in enumerate(temps)]
     observer = [
-        {"t": t0 + 3600 * i, "rooms": {"r": {"heat_target": h, "cool_target": None}}} for i, h in enumerate(heat)
+        {
+            "t": t0 + step_s * i,
+            "rooms": {
+                "r": {
+                    "heat_target": h,
+                    "cool_target": None,
+                    "mode": "idle" if held[i] else "heating",
+                    "compressor_protection_active": held[i],
+                }
+            },
+        }
+        for i, h in enumerate(heat)
     ]
-    return RunData(None, scn, samples, observer, [], t0 + 3600 * len(temps), {})  # type: ignore[arg-type]
+    return RunData(None, scn, samples, observer, [], t0 + step_s * len(temps), {})  # type: ignore[arg-type]
 
 
 def test_heating_above_band_counts_as_overshoot():
@@ -80,3 +92,27 @@ def test_truth_beta_s_in_roommind_units():
     assert _truth_beta_s(run, "r", 3.6e6) == pytest.approx(2.0)
     night = _with_sun(_run([20.0] * 2, [20.0] * 2), [0.0, 0.0], [0.0, 0.0])
     assert _truth_beta_s(night, "r", 3.6e6) is None
+
+
+def test_hold_overshoot_counts_only_while_the_min_run_holds():
+    temps = [20.0, 21.0, 21.8, 22.6, 23.0, 22.0]
+    hold = [False, False, True, True, False, False]
+    m = _room_metrics(_run(temps, [21.0] * 6, hold, step_s=600), "r")
+    assert m["hold_heat_over_max_k"] == pytest.approx(1.6)
+    assert m["hold_heat_over_kh"] == pytest.approx((0.3 + 1.1) / 6, abs=1e-3)
+
+
+def test_hold_running_into_a_setback_is_measured_against_the_comfort_target():
+    temps = [20.0, 21.0, 21.4, 21.6]
+    heat = [21.0, 21.0, 18.0, 18.0]
+    hold = [False, False, True, True]
+    m = _room_metrics(_run(temps, heat, hold, step_s=600), "r")
+    assert m["hold_heat_over_max_k"] == pytest.approx(0.6)
+
+
+def test_hold_while_preheating_is_measured_against_the_coming_target():
+    temps = [18.0, 19.0, 20.5, 21.2]
+    heat = [18.0, 18.0, 18.0, 21.0]
+    hold = [False, False, True, False]
+    m = _room_metrics(_run(temps, heat, hold, step_s=600), "r")
+    assert m["hold_heat_over_max_k"] == 0.0

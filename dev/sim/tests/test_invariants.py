@@ -154,7 +154,7 @@ def test_commanded_min_run_counts_per_group():
     assert len(min_run_commanded(run)) == 1
 
 
-def _hold_run(setpoints, heat_targets=(21.0, 21.0), cool_target=None, climate_mode="heat_only"):  # noqa: ANN001
+def _hold_run(setpoints, heat_targets=(21.0, 21.0), cool_target=None, climate_mode="heat_only", current_temp=21.2):  # noqa: ANN001
     """Heat at 30 °C, the room goes idle into the min-run hold, then ``setpoints`` are sent."""
     run = _run(
         [False] * 30,
@@ -162,7 +162,7 @@ def _hold_run(setpoints, heat_targets=(21.0, 21.0), cool_target=None, climate_mo
         + [(120 + 30 * i, "set_temperature", {"temperature": v}) for i, v in enumerate(setpoints)],
     )
     run.storage["rooms"]["r"]["climate_mode"] = climate_mode
-    room = {"heat_target": heat_targets[0], "cool_target": cool_target, "current_temp": 21.5}
+    room = {"heat_target": heat_targets[0], "cool_target": cool_target, "current_temp": current_temp}
     run.observer = [{"t": run.start + 90, "rooms": {"r": {**room, "mode": "heating"}}}] + [
         {
             "t": run.start + 150 + 30 * i,
@@ -186,8 +186,15 @@ def test_hold_passes_a_lowered_target_on():
 
 
 def test_hold_band_overshoot_may_send_the_target():
-    run = _hold_run([21.0], cool_target=21.5, climate_mode="auto")
+    run = _hold_run([21.0], cool_target=21.5, climate_mode="auto", current_temp=21.5)
     assert min_run_hold_keeps_setpoint(run) == []
+
+
+def test_hold_may_throttle_past_the_margin_but_not_below_the_target():
+    assert min_run_hold_keeps_setpoint(_hold_run([23.0], current_temp=21.5)) == []
+    assert min_run_hold_keeps_setpoint(_hold_run([21.0], current_temp=21.6)) == []
+    assert len(min_run_hold_keeps_setpoint(_hold_run([23.0], current_temp=21.4))) == 1
+    assert len(min_run_hold_keeps_setpoint(_hold_run([20.0], current_temp=21.6))) == 1
 
 
 def test_setpoint_drop_outside_the_hold_is_fine():

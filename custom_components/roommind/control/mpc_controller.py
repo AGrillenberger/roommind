@@ -87,6 +87,8 @@ _active_targets: dict[str, tuple[float | None, float | None]] = {}
 # Devices whose overshoot target the hold already passed on; one send per hold, so a device
 # that does not take the value is not commanded every cycle until the min-run ends.
 _overshoot_sent: set[str] = set()
+# Devices the hold already throttled to minimum (room past its target), one send per hold (#416).
+_hold_modulated: set[str] = set()
 # Last proportional setpoint send per device: (monotonic send time, (heat, cool) targets it was
 # computed for). Any other command to the device drops the entry (#317).
 _proportional_sent: dict[str, tuple[float, tuple[float | None, float | None]]] = {}
@@ -224,6 +226,7 @@ def clear_command_cache() -> None:
     _setpoint_override_warned.clear()
     _active_targets.clear()
     _overshoot_sent.clear()
+    _hold_modulated.clear()
 
 
 def _resolve_idle_setpoint(
@@ -1566,6 +1569,7 @@ class MPCController:
         for eid in self.thermostats + self.acs:
             if eid not in _forced_on:
                 _overshoot_sent.discard(eid)
+                _hold_modulated.discard(eid)
 
         # Resolve effective target_temp for the current mode
         if mode == MODE_HEATING:
@@ -2032,6 +2036,7 @@ class MPCController:
             cool_overshoot = current_temp is not None and current_temp <= limit
         overshoot = (heat_overshoot or cool_overshoot) and eid not in _overshoot_sent
         if not (heat_moved or cool_moved or overshoot):
+            await self._async_hold_modulate(eid, state, targets, current_temp)
             return
         # Recorded only once something was passed on, so a change that could not be
         # sent yet (single setpoint inside the band) is still pending next cycle.
@@ -2047,8 +2052,11 @@ class MPCController:
                     {"entity_id": eid, "temperature": self._hold_setpoint_ha(eid, target)},
                     temp_intent=hvac,
                 )
-                if overshoot and result != _CALL_FAILED:
-                    _overshoot_sent.add(eid)
+                if result != _CALL_FAILED:
+                    # The plain target is below any throttle level: no throttle on top of it this hold
+                    _hold_modulated.add(eid)
+                    if overshoot:
+                        _overshoot_sent.add(eid)
             return
 
         # heat_cool/auto regulate from both sides onto what they get, so a single
@@ -2086,6 +2094,74 @@ class MPCController:
                     {"entity_id": eid, "temperature": self._hold_setpoint_ha(eid, targets.cool)},
                     temp_intent="cool",
                 )
+
+    async def _async_hold_modulate(
+        self, eid: str, state: Any, targets: TargetTemps, current_temp: float | None
+    ) -> None:
+        """Throttle a held unit to minimum once the room is ``HOLD_OVERSHOOT_MARGIN`` past its target.
+
+        The hold keeps the last active setpoint so the unit does not stop (#436). In a
+        room that cannot switch sides (heat_only, cool_only, or a wide band) nothing
+        else ends the boost before the min-run is over, and a strong unit carries the
+        room several degrees past the target. The unit gets the value its own sensor
+        reads, rounded up (heating) or down (cooling) to its step: an inverter there
+        modulates to minimum and keeps running, where the plain room target would stop
+        a unit whose sensor reads warm. Never past the room target (+ direct offset),
+        only ever lowering (raising for cooling) the held value, and once per hold, so
+        the setpoint does not follow the room up and down (#416).
+        """
+        hvac = state.state
+        if current_temp is None or eid in _hold_modulated or hvac not in ("heat", "cool"):
+            return
+        heating = hvac == "heat"
+        target = targets.heat if heating else targets.cool
+        if target is None:
+            return
+        past = (
+            current_temp >= target + HOLD_OVERSHOOT_MARGIN
+            if heating
+            else current_temp <= target - HOLD_OVERSHOOT_MARGIN
+        )
+        if not past:
+            return
+        attrs = state.attributes
+        held = attrs.get("temperature")
+        if held is None:
+            cached = _cached_command(eid, "set_temperature")
+            held = cached.get("temperature") if cached else None
+        reading = attrs.get("current_temperature")
+        try:
+            held_f = float(held) if held is not None else None
+            reading_f = float(reading) if reading is not None else celsius_to_ha_temp(self.hass, current_temp)
+        except (TypeError, ValueError):
+            return
+        if held_f is None:
+            return
+        step = _resolve_step(self.hass, attrs) or celsius_delta_to_ha(self.hass, BOOST_CAP_FALLBACK_STEP)
+        bound = self._hold_setpoint_ha(eid, target)
+        tolerance = celsius_delta_to_ha(self.hass, COMPRESSOR_HOLD_RETARGET_TOLERANCE)
+        if heating:
+            level = max(bound, math.ceil(reading_f / step - 1e-6) * step)
+            if level >= held_f - tolerance:
+                return
+        else:
+            level = min(bound, math.floor(reading_f / step + 1e-6) * step)
+            if level <= held_f + tolerance:
+                return
+        _LOGGER.debug(
+            "Area '%s': throttling held '%s' from %s to %s (room %.1f, target %.1f)",
+            self._area_id,
+            eid,
+            held_f,
+            level,
+            current_temp,
+            target,
+        )
+        result = await self._call(
+            "set_temperature", {"entity_id": eid, "temperature": round(level, 2)}, temp_intent=hvac
+        )
+        if result != _CALL_FAILED:
+            _hold_modulated.add(eid)
 
     def direct_target(self, mode: str, target: float) -> float:
         """Room target (°C, without offset) a direct-mode device gets while *mode* is active.

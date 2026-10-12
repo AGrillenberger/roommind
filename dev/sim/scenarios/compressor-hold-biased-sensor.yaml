@@ -11,10 +11,13 @@ description: >
   one (target +1 K after snapping to whole degrees): the unit's biased sensor reads it
   as reached and the unit cycles on its own minimum run. Holding a higher setpoint would
   overheat a room that is already at its target, so this is not fixed in the hold.
+  Once the room is 0.5 K past its target the hold throttles the unit to the value its
+  own sensor reads, so a saturated boost no longer carries the room degrees past it.
 refs: [436]
 tags: [compressor, ac]
 expect:
   - {invariant: min_run_hold_keeps_setpoint}
   - {invariant: min_run_commanded}
+  - {metric: comfort.hold_heat_over_max_k, room: wohnzimmer, max: 2.0, label: held unit throttled to its own reading past target + 0.5 K (2.6 K before)}
   - {invariant: min_run_respected, known_failure: 'unit cycles on its own sensor: the hold keeps the last proportional setpoint, often target +1 K after a one-tick heat decision near the target, and the +1.5 K return-air bias reads that as reached'}
   - {metric: device.starts_per_day, entity_id: climate.wohnzimmer_ac, max: 30, known_failure: 'same cause as min_run_respected (unit cycles on its own sensor at a small held setpoint)'}

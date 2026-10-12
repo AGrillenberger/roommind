@@ -131,14 +131,20 @@ def _active_targets_before(run: RunData, area: str, t: float) -> dict[str, Any] 
     return None
 
 
+# RoomMind's HOLD_OVERSHOOT_MARGIN: past target + this the hold throttles the unit to minimum.
+HOLD_THROTTLE_MARGIN_K = 0.5
+
+
 def min_run_hold_keeps_setpoint(run: RunData, tolerance_k: float = 0.05) -> list[Violation]:
     """While the min-run holds a unit on, RoomMind does not cut its setpoint back (#436).
 
     A heating setpoint lowered (cooling setpoint raised) during the hold stops units
     whose own sensor already reads the room as warm (cold) enough; in #436 the mode
     stayed "heat" while the compressor stopped. Allowed: the room target itself moved
-    that way since the last active tick (eco override, vacation, schedule), or the room
-    ran past the far side of its band (documented band-overshoot rule).
+    that way since the last active tick (eco override, vacation, schedule), the room
+    ran past the far side of its band (documented band-overshoot rule), or the room is
+    ``HOLD_THROTTLE_MARGIN_K`` past the target and the new setpoint stays on the demand
+    side of it (throttle to minimum instead of boosting on).
     """
     rooms_cfg = run.rooms_config()
     area_of: dict[str, str | None] = {}
@@ -180,6 +186,11 @@ def min_run_hold_keeps_setpoint(run: RunData, tolerance_k: float = 0.05) -> list
                 continue
         climate_mode = (rooms_cfg.get(area) or {}).get("climate_mode", "auto")
         cur = room.get("current_temp")
+        if cur is not None and now_t is not None:
+            if heating and cur >= now_t + HOLD_THROTTLE_MARGIN_K - 1e-6 and new >= now_t - tolerance_k:
+                continue
+            if cooling and cur <= now_t - HOLD_THROTTLE_MARGIN_K + 1e-6 and new <= now_t + tolerance_k:
+                continue
         if cur is not None:
             if heating and climate_mode != "heat_only" and room.get("cool_target") is not None:
                 if cur >= room["cool_target"]:
