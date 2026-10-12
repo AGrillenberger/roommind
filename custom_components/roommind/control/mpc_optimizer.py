@@ -219,7 +219,7 @@ class MPCOptimizer:
                         future_occupancy=future_occupancy,
                         rebound_charge=charge,
                     )
-                    if self.start_penalty and action not in (MODE_IDLE, last_action):
+                    if self.start_penalty and action == MODE_HEATING and last_action != MODE_HEATING:
                         cost += self.w_comfort * self.start_penalty
                     if cost < best_cost:
                         best_cost = cost

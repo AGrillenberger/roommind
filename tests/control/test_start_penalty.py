@@ -101,3 +101,27 @@ def test_controller_charges_starts_for_underfloor_and_passes_the_running_mode(mo
 def test_controller_keeps_fast_systems_free_of_start_cost(monkeypatch):
     seen = _controller(monkeypatch, system="radiator", previous_mode=MODE_IDLE)
     assert seen == {"penalty": 0.0, "initial_mode": MODE_IDLE}
+
+
+def test_cooling_starts_pay_no_slow_heating_penalty():
+    """UFH+AC room in summer: the AC's cooling start is not charged the screed's start cost."""
+
+    def first(penalty: float) -> str:
+        opt = MPCOptimizer(
+            RCModel(C=1.0, U=0.02, Q_heat=1.5, Q_cool=3.0),
+            can_heat=True,
+            can_cool=True,
+            min_run_blocks=6,
+            heating_system_type="underfloor",
+            start_penalty=penalty,
+        )
+        plan = opt.optimize(
+            T_room=24.55,
+            T_outdoor_series=[30.0] * 24,
+            heat_target_series=[21.0] * 24,
+            cool_target_series=[24.5] * 24,
+            dt_minutes=5,
+        )
+        return plan.actions[0]
+
+    assert first(SLOW_SYSTEM_START_PENALTY) == first(0.0)
