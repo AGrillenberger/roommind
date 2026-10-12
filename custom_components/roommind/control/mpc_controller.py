@@ -1487,7 +1487,7 @@ class MPCController:
         # deliver a throttled fraction, the EKF learned a 3x heating rate from one). Simple
         # mode and slow heating systems keep the plain rule (UFH + split: the shorter
         # learning runs left the screed idle for hours on one seed).
-        capped = self._mpc_enabled and not is_slow_heat(get_min_run_blocks(self._heating_system_type, PLAN_DT_MINUTES))
+        capped = self._mpc_enabled and not is_slow_heat(get_min_run_blocks(self._run_system, PLAN_DT_MINUTES))
         ceiling = HARD_OVERSHOOT_CEILING if capped else math.inf
         if self.previous_mode == MODE_HEATING and can_heat and heat_target is not None:
             if current_temp < heat_target or (

@@ -395,6 +395,8 @@ async def build_analytics_data(
                         q_rebound=coordinator._rebound_tracker.get_charge(area_id),
                         previous_mode=sim_prev_mode,
                         mode_elapsed_minutes=sim_mode_elapsed,
+                        # AC heating alone in an orchestrated UFH room runs on AC rules
+                        run_system=("" if coordinator._heat_source_states.get(area_id) == "secondary" else system_type),
                     ),
                 )
 

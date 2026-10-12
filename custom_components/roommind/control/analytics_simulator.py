@@ -163,6 +163,7 @@ def simulate_prediction(
     previous_mode: str = MODE_IDLE,
     mode_elapsed_minutes: float | None = None,
     q_rebound: float | None = None,
+    run_system: str | None = None,
 ) -> list[float]:
     """Simulate temperature prediction for the analytics chart.
 
@@ -171,6 +172,8 @@ def simulate_prediction(
     - MPC active: rolling-horizon optimizer simulation
     - Fallback: bang-bang with hysteresis
     """
+    # Run rules follow the system actually heating (AC alone in a UFH room, as in the controller)
+    rules = heating_system_type if run_system is None else run_system
     if window_open:
         return _simulate_window_open(model, estimator, target_forecast, outdoor_series, current_temp)
 
@@ -192,6 +195,7 @@ def simulate_prediction(
             previous_mode=previous_mode,
             mode_elapsed_minutes=mode_elapsed_minutes,
             q_rebound=q_rebound,
+            run_system=rules,
         )
 
     return _simulate_bangbang(
@@ -211,7 +215,8 @@ def simulate_prediction(
         previous_mode=previous_mode,
         mode_elapsed_minutes=mode_elapsed_minutes,
         q_rebound=q_rebound,
-        capped=is_mpc_enabled(settings) and not is_slow_heat(get_min_run_blocks(heating_system_type, PLAN_DT_MINUTES)),
+        run_system=rules,
+        capped=is_mpc_enabled(settings) and not is_slow_heat(get_min_run_blocks(rules, PLAN_DT_MINUTES)),
     )
 
 
@@ -297,6 +302,7 @@ def _simulate_mpc(
     previous_mode: str = MODE_IDLE,
     mode_elapsed_minutes: float | None = None,
     q_rebound: float | None = None,
+    run_system: str | None = None,
 ) -> list[float]:
     """Rolling-horizon MPC simulation matching the real controller.
 
@@ -314,7 +320,8 @@ def _simulate_mpc(
     w_energy = max(1.0, (100 - cw) / 10.0)
     approach_rate = min(1.0, APPROACH_RATE_MIN + (1.0 - APPROACH_RATE_MIN) * cw / DEFAULT_COMFORT_WEIGHT)
 
-    min_run = get_min_run_blocks(heating_system_type, PLAN_DT_MINUTES)
+    rules = heating_system_type if run_system is None else run_system
+    min_run = get_min_run_blocks(rules, PLAN_DT_MINUTES)
     cool_min_run = get_min_run_blocks("", PLAN_DT_MINUTES)
     slow_heat = is_slow_heat(min_run)
     start_penalty = slow_start_penalty(min_run, PLAN_DT_MINUTES)
@@ -387,7 +394,7 @@ def _simulate_mpc(
                 min_run_blocks=min_run,
                 cool_min_run_blocks=cool_min_run,
                 override_active=override_active,
-                heating_system_type=heating_system_type,
+                heating_system_type=rules,
                 approach_rate=approach_rate,
                 start_penalty=start_penalty,
                 fast_heater_shares_model=acs_can_heat,
@@ -503,6 +510,7 @@ def _simulate_bangbang(
     previous_mode: str = MODE_IDLE,
     mode_elapsed_minutes: float | None = None,
     q_rebound: float | None = None,
+    run_system: str | None = None,
     capped: bool = True,
 ) -> list[float]:
     """Bang-bang fallback simulation with mode stickiness + idle rate cap.
@@ -514,7 +522,8 @@ def _simulate_bangbang(
     has_heat = bool(get_trv_eids(room_config.get("devices", []))) or acs_can_heat
     has_cool = bool(get_ac_eids(room_config.get("devices", [])))
 
-    min_run = get_min_run_blocks(heating_system_type, PLAN_DT_MINUTES)
+    rules = heating_system_type if run_system is None else run_system
+    min_run = get_min_run_blocks(rules, PLAN_DT_MINUTES)
     # Cooling always runs on an AC, also in a UFH room
     cool_min_run = get_min_run_blocks("", PLAN_DT_MINUTES)
 

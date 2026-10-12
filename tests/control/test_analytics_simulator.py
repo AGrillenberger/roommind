@@ -1040,3 +1040,42 @@ def test_rebound_charge_warms_the_idle_prediction(mpc_active):
     charged = simulate_prediction(**kwargs, q_rebound=0.8)
     plain = simulate_prediction(**kwargs)
     assert charged[0] > plain[0]
+
+
+@pytest.mark.parametrize(
+    ("run_system", "expected_type", "expected_min_run"),
+    [(None, "underfloor", 6), ("", "", 2)],
+)
+def test_prediction_uses_the_run_system_of_the_heating_source(monkeypatch, run_system, expected_type, expected_min_run):
+    """AC heating alone in an orchestrated UFH room: the prediction plans with AC run rules, like the controller."""
+    import custom_components.roommind.control.analytics_simulator as sim_mod
+
+    seen: dict = {}
+    real_init = sim_mod.MPCOptimizer.__init__
+
+    def spy_init(self, *args, **kwargs):
+        seen.setdefault("type", kwargs.get("heating_system_type"))
+        seen.setdefault("min_run", kwargs.get("min_run_blocks"))
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(sim_mod.MPCOptimizer, "__init__", spy_init)
+    room_config = {
+        "devices": [{"entity_id": "climate.ufh", "type": "trv", "role": "auto", "heating_system_type": "underfloor"}],
+        "climate_mode": "heat_only",
+    }
+    simulate_prediction(
+        model=RCModel(C=1.0, U=0.05, Q_heat=3.0, Q_cool=0.0, Q_solar=0.0),
+        estimator=ThermalEKF(),
+        target_forecast=[{"target_temp": 21.0}] * 5,
+        outdoor_series=[5.0] * 5,
+        current_temp=20.0,
+        window_open=False,
+        mpc_active=True,
+        room_config=room_config,
+        settings={},
+        all_points=[],
+        heating_system_type="underfloor",
+        run_system=run_system,
+    )
+    assert seen["type"] == expected_type
+    assert seen["min_run"] == expected_min_run
