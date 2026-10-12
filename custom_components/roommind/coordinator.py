@@ -728,13 +728,17 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # devices are doing until a cycle has actually controlled the room. The run's
         # start is unknown too: it counts as started now, so a run that began just
         # before the restart still gets its minimum run (at most one extra min run).
+        seed_pending = False
         if (
             has_external_sensor
             and area_id not in self._mode_seeded
             and self._previous_modes.get(area_id, MODE_IDLE) == MODE_IDLE
         ):
-            seeded = infer_running_mode(self.hass, room)
-            if seeded != MODE_IDLE:
+            seeded = infer_running_mode(self.hass, room, before=self._startup_ts)
+            # A device without a usable state yet (Zigbee after a restart): ask again in
+            # the next cycle, within the startup grace period of the temperature sensors.
+            seed_pending = seeded is None and time.monotonic() - self._startup_ts < MAX_SENSOR_STALENESS
+            if seeded not in (None, MODE_IDLE):
                 self._previous_modes[area_id] = seeded
                 self._mode_on_since[area_id] = time.time()
 
@@ -1017,7 +1021,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 area_id,
             )
         else:
-            self._mode_seeded.add(area_id)
+            if not seed_pending:
+                self._mode_seeded.add(area_id)
             try:
                 await controller.async_apply(
                     mode,

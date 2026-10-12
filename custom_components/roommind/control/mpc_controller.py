@@ -1017,22 +1017,28 @@ def decide_mpc_action(
     return action, power_fraction
 
 
-def infer_running_mode(hass: HomeAssistant, room_config: dict) -> str:
+def infer_running_mode(hass: HomeAssistant, room_config: dict, before: float | None = None) -> str | None:
     """Mode the room's devices run in right now, to seed the controller after a start.
 
     The previous mode lives in memory only: after a reload or restart a run inside the
     start hysteresis band (20.9 at a 21 target) would read as "idle" and be switched off
     once. A device counts when it reports ``hvac_action`` heating/cooling, unless the last
     command RoomMind sent it (kept across an integration reload) switched it off, which
-    marks a manual switch-on. Devices disagreeing on the direction seed nothing.
+    marks a manual switch-on; ``before`` (monotonic) limits that to commands sent before
+    the start, not the ones of the first cycles. Devices disagreeing on the direction
+    seed nothing. None while a device has no usable state yet (Zigbee TRVs are
+    unavailable for a while after a restart): the caller asks again in the next cycle.
     """
     heating = cooling = False
     for eid in get_all_entity_ids(room_config.get("devices", [])):
         state = hass.states.get(eid)
         if state is None:
             continue
+        if state.state in ("unavailable", "unknown"):
+            return None
         last = _last_commands.get(eid)
-        if last is not None and last.get("hvac_mode") == "off":
+        sent = _sent_at.get((eid, "set_hvac_mode"))
+        if last is not None and last.get("hvac_mode") == "off" and (before is None or (sent or 0.0) < before):
             continue
         action = state.attributes.get("hvac_action")
         if action in ("heating", "preheating"):

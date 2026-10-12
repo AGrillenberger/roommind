@@ -47,6 +47,7 @@ def _clean_cache():
         ({TRV: _state("heat", "idle")}, MODE_IDLE),
         ({TRV: _state("off", "off")}, MODE_IDLE),
         ({TRV: None}, MODE_IDLE),
+        ({TRV: _state("unavailable", None)}, None),
         ({TRV: _state("cool", "cooling")}, MODE_COOLING),
         ({TRV: _state("heat", "heating"), "climate.ac": _state("cool", "cooling")}, MODE_IDLE),
     ],
@@ -110,3 +111,20 @@ async def test_seed_only_until_the_first_controlled_cycle(hass, mock_config_entr
     )
     data = await coordinator._async_update_data()
     assert data["rooms"][AREA]["mode"] == MODE_IDLE
+
+
+@pytest.mark.asyncio
+async def test_seed_waits_for_a_device_that_is_unavailable_after_the_restart(hass, mock_config_entry):
+    """Zigbee TRVs report unavailable for a while after an HA restart: the seed must not be
+    used up by that cycle, or the run is switched off once the device is back."""
+    coordinator, room = await _first_cycle(hass, mock_config_entry, _state("unavailable", None))
+    assert room["mode"] == MODE_IDLE
+    assert AREA not in coordinator._mode_seeded
+    hass.states.get = MagicMock(
+        side_effect=lambda eid: _state("heat", "heating") if eid == TRV else make_mock_states_get(temp="20.9")(eid)
+    )
+    hass.services.async_call.reset_mock()
+    data = await coordinator._async_update_data()
+    assert data["rooms"][AREA]["mode"] == MODE_HEATING
+    assert not _turned_off(hass)
+    assert AREA in coordinator._mode_seeded
