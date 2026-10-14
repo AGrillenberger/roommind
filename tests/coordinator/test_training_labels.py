@@ -42,7 +42,15 @@ def _label(coordinator, room, mode, pf, states, plan=None):
 
 @pytest.mark.parametrize(
     ("action", "expected"),
-    [("heating", 1.0), ("preheating", 1.0), ("idle", 0.0), ("cooling", 0.0), (None, 0.2), ("fan", 0.2)],
+    [
+        ("heating", 1.0),
+        ("preheating", 1.0),
+        ("idle", 0.0),
+        ("cooling", 0.0),
+        ("defrosting", 0.0),
+        (None, 0.2),
+        ("fan", 0.2),
+    ],
 )
 def test_single_device_label(coordinator, action, expected):
     label = _label(coordinator, _room("climate.trv"), MODE_HEATING, 0.2, _states(trv=("heat", action)))

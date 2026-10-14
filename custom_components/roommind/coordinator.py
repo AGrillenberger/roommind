@@ -1657,7 +1657,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         Driven devices: the plan's active commands with orchestration, else every device
         that is not off. A parked device still running (compressor hold) delivers, so it
-        counts as well. Devices without a usable ``hvac_action`` keep their commanded pf;
+        counts as well. A heat pump that is defrosting delivers no heat (0.0).
+        Devices without a usable ``hvac_action`` keep their commanded pf;
         no observable device at all keeps ``commanded_pf``.
         """
         running_actions = ("heating", "preheating") if mode == MODE_HEATING else ("cooling",)
@@ -1675,7 +1676,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             action = state.attributes.get("hvac_action")
             if action in running_actions:
                 labels.append(1.0)
-            elif action in ("idle", "off", "heating", "preheating", "cooling"):
+            elif action in ("idle", "off", "heating", "preheating", "cooling", "defrosting"):
                 labels.append(0.0)
             else:
                 labels.append(pf)
