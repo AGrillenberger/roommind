@@ -6,7 +6,7 @@ import pytest
 from helpers import scenario
 
 from roommind_sim.analysis.load import RunData
-from roommind_sim.analysis.metrics import _cover_metrics, _room_metrics, _truth_beta_s
+from roommind_sim.analysis.metrics import _cover_metrics, _room_metrics, _truth_beta_device, _truth_beta_s
 from roommind_sim.scenario import load_scenario_dict
 
 
@@ -186,3 +186,21 @@ def test_idle_below_target_measures_the_longest_idle_stretch():
     m = _room_metrics(_run(temps, [21.0] * 7, idle), "r")
     # idle 1.5 K below from t1 to t3 (2 h); t4 is within 1 K, t5 idle again for 0 h
     assert m["idle_below_target_max_h"] == pytest.approx(2.0)
+
+
+def test_truth_beta_device_per_running_share():
+    run = _run([20.0] * 4, [21.0] * 4)
+    run.scenario.rooms["r"].devices = [type("D", (), {"entity_id": e})() for e in ("climate.a", "climate.b")]
+    devices = [
+        {"climate.a": {"action": "idle", "heat_w": 0.0}, "climate.b": {"action": "idle", "heat_w": 0.0}},
+        {"climate.a": {"action": "heating", "heat_w": 1000.0}, "climate.b": {"action": "heating", "heat_w": 1000.0}},
+        {"climate.a": {"action": "heating", "heat_w": 1000.0}, "climate.b": {"action": "idle", "heat_w": 0.0}},
+        {"climate.a": {"action": "cooling", "heat_w": -500.0}, "climate.b": {"action": "idle", "heat_w": 0.0}},
+    ]
+    for s, d in zip(run.samples, devices, strict=True):
+        s["devices"] = d
+    # 3000 W over a running share of 1.5 -> 2000 W per full label, 3.6 MJ/K -> 2 K/h
+    assert _truth_beta_device(run, "r", 3.6e6, "heating") == pytest.approx(2.0)
+    assert _truth_beta_device(run, "r", 3.6e6, "cooling") == pytest.approx(1.0)
+    run.samples = run.samples[:1]
+    assert _truth_beta_device(run, "r", 3.6e6, "heating") is None

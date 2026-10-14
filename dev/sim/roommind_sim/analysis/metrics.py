@@ -288,17 +288,48 @@ def _model_metrics(run: RunData) -> dict[str, Any]:
         learned = thermal.get(area) or {}
         x = learned.get("x") or []
         beta_s = _truth_beta_s(run, area, truth["capacity_j_k"])
+        beta_h = _truth_beta_device(run, area, truth["capacity_j_k"], "heating")
+        beta_c = _truth_beta_device(run, area, truth["capacity_j_k"], "cooling")
+        # learned / truth: the expectation form for heating and cooling rates
+        ratio = {
+            key: round(x[i] / truth_val, 2) if len(x) > i and truth_val else None
+            for key, i, truth_val in (("beta_h_ratio", 2, beta_h), ("beta_c_ratio", 3, beta_c))
+        }
         out[area] = {
             "truth_alpha_per_h": round(truth["alpha_per_h"], 4),
             "truth_tau_h": round(truth["tau_h"], 1),
             "truth_beta_s": round(beta_s, 3) if beta_s is not None else None,
+            "truth_beta_h": round(beta_h, 3) if beta_h is not None else None,
+            "truth_beta_c": round(beta_c, 3) if beta_c is not None else None,
             "learned_alpha_per_h": round(x[1], 4) if len(x) > 1 else None,
             "learned_beta_h": round(x[2], 3) if len(x) > 2 else None,
             "learned_beta_c": round(x[3], 3) if len(x) > 3 else None,
             "learned_beta_s": round(x[4], 3) if len(x) > 4 else None,
+            **ratio,
             "n_updates": learned.get("n_updates"),
         }
     return out
+
+
+def _truth_beta_device(run: RunData, area: str, capacity_j_k: float, action: str) -> float | None:
+    """Heating/cooling rate in RoomMind's units (K/h at full label), from the room's devices.
+
+    RoomMind labels a step with the share of its devices that report ``action``, so the
+    truth is the delivered sensible power per unit of that share: sum(P) / sum(share).
+    """
+    eids = [d.entity_id for d in run.scenario.rooms[area].devices]
+    sign = 1.0 if action == "heating" else -1.0
+    power = share = 0.0
+    for s in run.samples:
+        devs = [s.get("devices", {}).get(eid) or {} for eid in eids]
+        running = sum(1 for d in devs if d.get("action") == action)
+        if not eids or not running:
+            continue
+        power += sum(max(0.0, sign * d.get("heat_w", 0.0)) for d in devs)
+        share += running / len(eids)
+    if share <= 0 or capacity_j_k <= 0:
+        return None
+    return power / share * 3600.0 / capacity_j_k
 
 
 def _truth_beta_s(run: RunData, area: str, capacity_j_k: float) -> float | None:

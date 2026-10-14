@@ -1293,6 +1293,12 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 ekf_pf = 0.0
                 q_residual_training = 0.0
 
+        # Delivered power as the training label (not the commanded one): a TRV's own
+        # P band or an AC's control loop runs at (nearly) full output from pf ~0.1 on,
+        # so commanded-pf labels inflated beta_h 3-30x in the simulation.
+        if climate_active and has_external_sensor and ekf_mode in (MODE_HEATING, MODE_COOLING):
+            ekf_pf = self._delivered_training_power(room, ekf_mode, ekf_pf, heat_source_plan)
+
         # Zero-power normalization: heat source orchestration may yield
         # mean(pf)=0 while the commanded mode is still heating/cooling.
         # Without this the predict step inflates Q_BETA_H through a zero
@@ -1643,6 +1649,41 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         pf = 1.0 if dominated in ("heating", "cooling") else 0.0
         return (dominated, pf)
+
+    def _delivered_training_power(
+        self, room: dict, mode: str, commanded_pf: float, heat_source_plan: Any | None
+    ) -> float:
+        """Share of the driven devices that report running in ``mode`` (EKF training label).
+
+        Driven devices: the plan's active commands with orchestration, else every device
+        that is not off. A parked device still running (compressor hold) delivers, so it
+        counts as well. Devices without a usable ``hvac_action`` keep their commanded pf;
+        no observable device at all keeps ``commanded_pf``.
+        """
+        running_actions = ("heating", "preheating") if mode == MODE_HEATING else ("cooling",)
+        if heat_source_plan is not None and heat_source_plan.commands:
+            driven = {c.entity_id: c.power_fraction for c in heat_source_plan.commands if c.active}
+            parked = [c.entity_id for c in heat_source_plan.commands if not c.active]
+        else:
+            driven = dict.fromkeys(get_all_entity_ids(room.get("devices", [])), commanded_pf)
+            parked = []
+        labels: list[float] = []
+        for eid, pf in driven.items():
+            state = self.hass.states.get(eid)
+            if state is None or state.state in ("unavailable", "unknown", "off"):
+                continue
+            action = state.attributes.get("hvac_action")
+            if action in running_actions:
+                labels.append(1.0)
+            elif action in ("idle", "off", "heating", "preheating", "cooling"):
+                labels.append(0.0)
+            else:
+                labels.append(pf)
+        for eid in parked:
+            state = self.hass.states.get(eid)
+            if state is not None and state.attributes.get("hvac_action") in running_actions:
+                labels.append(1.0)
+        return sum(labels) / len(labels) if labels else commanded_pf
 
     def _devices_lack_hvac_action(self, room: dict) -> bool:
         """Return True if at least one active device lacks hvac_action.

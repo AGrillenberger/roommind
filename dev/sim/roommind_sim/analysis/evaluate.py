@@ -215,6 +215,12 @@ def _lines(metrics: dict[str, Any], warnings: list[dict[str, Any]]) -> list[str]
                 f"model {area}: alpha learned {m['learned_alpha_per_h']} vs lumped truth {m['truth_alpha_per_h']} 1/h, "
                 f"beta_s learned {m['learned_beta_s']} vs truth {m['truth_beta_s']} K/h per kW/m² ({m['n_updates']} updates)"
             )
+            for side in ("h", "c"):
+                if m.get(f"truth_beta_{side}") is not None:
+                    lines.append(
+                        f"model {area}: beta_{side} learned {m[f'learned_beta_{side}']} vs truth "
+                        f"{m[f'truth_beta_{side}']} K/h while running (ratio {m[f'beta_{side}_ratio']})"
+                    )
     for w in warnings:
         lines.append(f"WARNING {w['invariant']}: {w['count']}x, e.g. {w['violations'][0]['detail']}")
     return lines
