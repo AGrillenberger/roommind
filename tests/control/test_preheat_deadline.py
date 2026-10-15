@@ -57,13 +57,13 @@ def test_no_rise_no_preheat():
     assert plan.preheat_blocks == 0
 
 
-def test_running_preheat_continues_until_the_target_is_reached():
+def test_running_preheat_keeps_going_at_the_deadline_edge():
     # Waiting one block would still make it, so a fresh start waits ...
-    assert _plan(SLOW, 19.5, rise_at=24).actions[0] == MODE_IDLE
+    assert _plan(SLOW, 19.5, rise_at=20).actions[0] == MODE_IDLE
     # ... but a pre-heat already running keeps going instead of toggling at the edge
-    plan = _plan(SLOW, 19.5, rise_at=24, initial_mode=MODE_HEATING)
+    plan = _plan(SLOW, 19.5, rise_at=20, initial_mode=MODE_HEATING)
     assert plan.actions[0] == MODE_HEATING
-    assert plan.preheat_blocks == 24
+    assert plan.preheat_blocks == 20
 
 
 def test_running_preheat_stops_at_the_target():
@@ -131,3 +131,11 @@ def test_without_preheat_the_guard_keeps_the_short_window(monkeypatch):
     plan = MPCPlan(actions=[MODE_HEATING] * 24, temperatures=[18.0] * 25, power_fractions=[1.0] * 24)
     ctrl = _controller(monkeypatch, plan, 90 * 60)
     assert ctrl._evaluate_mpc(18.0, TargetTemps(17.5, None))[0] == MODE_IDLE
+
+
+def test_an_eco_holding_run_does_not_turn_into_an_early_preheat():
+    """A run holding the eco target ends normally; comfort 6 h out (~2 h needed) is no reason to keep heating."""
+    medium = RCModel(C=1.0, U=0.014, Q_heat=1.5, Q_cool=4.0)
+    plan = _plan(medium, 17.6, rise_at=72, n=96, initial_mode=MODE_HEATING)
+    assert plan.actions[0] == MODE_IDLE
+    assert plan.preheat_blocks == 0

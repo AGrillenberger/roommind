@@ -140,6 +140,12 @@ timeline:
   - {at: "+9d10h", do: roommind.ws, type: roommind/override/set, area_id: wohnzimmer, override_type: boost, duration: 2}
 expect:
   - {metric: comfort.in_band_pct, room: wohnzimmer, min: 85}
+  # Radiators sized to the heat load need hours to recover from the setback. With only the
+  # 30-min decision window the rooms reached the comfort block 0.9-2.8 K short (under 64/27/16/52 Kh);
+  # the pre-heat deadline starts in time (22/10/7/25 Kh, +2 % energy)
+  - {metric: comfort.undershoot_kh, room: wohnzimmer, max: 40, label: pre-heated in time for the comfort block}
+  - {metric: comfort.undershoot_kh, room: kueche, max: 18, label: pre-heated in time for the comfort block}
+  - {metric: comfort.undershoot_kh, room: buero, max: 40, label: pre-heated in time for the comfort block}
   - {metric: device.commands_per_hour, entity_id: climate.schlafzimmer_trv, max: 4}
   - {invariant: no_rejected_commands}
   - {invariant: setpoints_within_device_range}

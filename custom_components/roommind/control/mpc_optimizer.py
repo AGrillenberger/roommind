@@ -25,6 +25,8 @@ LOOKAHEAD_BASE_BLOCKS = 6
 LOOKAHEAD_HORIZON_SCALE = 1.0
 # A pre-heat must reach a rising heat target within this margin at the block it starts.
 PREHEAT_DEADLINE_MARGIN = 0.1
+# A running pre-heat continues while waiting this long (1 h) would miss the target.
+PREHEAT_CONTINUE_BLOCKS = 12
 
 
 def slow_start_penalty(min_run_blocks: int, dt_minutes: float = 5.0) -> float:
@@ -347,27 +349,27 @@ class MPCOptimizer:
         q_occupancy: list[float],
         continuing: bool = False,
     ) -> int:
-        """Blocks from *i* to the rising heat target that waiting one more block would miss.
+        """Blocks from *i* to the rising heat target that waiting would miss.
 
         The greedy decision only looks ``_lookahead_blocks`` ahead, so a schedule block
         further away stayed invisible until shortly before it and a room with a radiator
         sized to its heat load started too late. Waits one block, then heats at full
         power: if that misses a later, higher heat target, the pre-heat starts now
-        (as late as possible). A pre-heat already running continues until the room
-        reaches the coming target: re-checking the deadline every block switched it
-        off and on at the edge. 0 when no such target exists.
+        (as late as possible). A run already heating keeps going while waiting
+        ``PREHEAT_CONTINUE_BLOCKS`` (at least the min run) would miss: re-checking a
+        single block switched it off and on at the edge, and a plain "heat until the
+        coming target" turned every eco-holding run into a pre-heat hours early.
+        0 when no such target exists.
         """
         n = len(heat_target_series)
         now = heat_target_series[i]
-        if not any(heat_target_series[j] > max(now, T_room) for j in range(i + 1, n)):
+        rise = next((j for j in range(i + 1, n) if heat_target_series[j] > max(now, T_room)), None)
+        if rise is None:
             return 0
-        if continuing:
-            rise = next(j for j in range(i + 1, n) if heat_target_series[j] > max(now, T_room))
-            if T_room < heat_target_series[rise] - PREHEAT_DEADLINE_MARGIN:
-                return rise - i
+        wait = max(PREHEAT_CONTINUE_BLOCKS, self.min_run_blocks) if continuing else 1
         T = T_room
         for j in range(i, n - 1):
-            Q = 0.0 if j == i else self.model.Q_heat
+            Q = 0.0 if j < i + wait else self.model.Q_heat
             T = self.model.predict(
                 T,
                 T_outdoor_series[j],
