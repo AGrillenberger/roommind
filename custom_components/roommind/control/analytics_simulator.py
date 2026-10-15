@@ -418,7 +418,7 @@ def _simulate_mpc(
                 T,
                 heat_series,
                 cool_series,
-                guard_blocks=max(SAFETY_GUARD_MIN_BLOCKS, min_run, plan.lookahead_blocks),
+                guard_blocks=max(SAFETY_GUARD_MIN_BLOCKS, min_run, plan.lookahead_blocks, plan.preheat_blocks + 1),
                 slow_heat=slow_heat,
                 previous_mode=prev_action,
                 heat_in_min_run=in_run

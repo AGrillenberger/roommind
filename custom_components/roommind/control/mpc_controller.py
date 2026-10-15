@@ -765,6 +765,7 @@ MPC_MAX_PREDICTION_STD = 0.5
 # Planning parameters
 PLAN_DT_MINUTES = 5
 MIN_HORIZON_HOURS = 2
+MAX_HORIZON_HOURS = 12
 HORIZON_MULTIPLIER = 2.5
 DEFAULT_OUTDOOR_TEMP_FALLBACK = 10.0
 SAFETY_GUARD_MIN_BLOCKS = 6  # Minimum guard horizon (30 min floor)
@@ -865,13 +866,15 @@ def compute_horizon_blocks(model: Any, current_temp: float, target_temp: float |
     if target_temp is None:
         return int(MIN_HORIZON_HOURS * 60 / PLAN_DT_MINUTES)
     delta = abs(current_temp - target_temp) + 3.0  # extra margin
-    # Q_fast: the air pull-down of an AC room is part of how fast it reaches the target
-    Q_max = max(model.Q_heat, model.Q_cool + model.Q_fast)
-    if Q_max > 0:
-        rate = Q_max / (model.C * 60)  # °C/min approx
+    # The slower direction sets the horizon: a heat-only room keeps the untrained default
+    # cooling rate, and taking the faster one cut a slow room's pre-heat window to 2 h.
+    # Q_fast: the air pull-down of an AC room is part of how fast it reaches the target.
+    rates = [q for q in (model.Q_heat, model.Q_cool + model.Q_fast) if q > 0]
+    if rates:
+        rate = min(rates) / (model.C * 60)  # °C/min approx
         if rate > 0:
             est_minutes = delta / rate
-            horizon_minutes = max(MIN_HORIZON_HOURS * 60, est_minutes * HORIZON_MULTIPLIER)
+            horizon_minutes = min(MAX_HORIZON_HOURS * 60, max(MIN_HORIZON_HOURS * 60, est_minutes * HORIZON_MULTIPLIER))
             return max(24, int(horizon_minutes / PLAN_DT_MINUTES))
     return int(MIN_HORIZON_HOURS * 60 / PLAN_DT_MINUTES)  # default 24 blocks = 2h
 
@@ -1422,7 +1425,7 @@ class MPCController:
         # matches the optimizer's per-system lookahead (read from the plan) so
         # mild-weather UFH pre-heat decisions don't get suppressed by a short
         # drift check.
-        guard_blocks = max(SAFETY_GUARD_MIN_BLOCKS, min_run, plan.lookahead_blocks)
+        guard_blocks = max(SAFETY_GUARD_MIN_BLOCKS, min_run, plan.lookahead_blocks, plan.preheat_blocks + 1)
         lead_heat = [h for h in raw_heat[:guard_blocks] if h is not None]
         lead_cool = [c for c in raw_cool[:guard_blocks] if c is not None]
         self._lead_heat = max(lead_heat) if lead_heat else None
