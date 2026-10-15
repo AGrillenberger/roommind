@@ -26,7 +26,7 @@ house:
       windows:
         - {orientation: S, area_m2: 3.5, sensor: binary_sensor.wohnzimmer_fenster}
       devices:
-        - {entity_id: climate.wohnzimmer_trv, profile: generic_trv, h_radiator_w_k: 55}
+        - {entity_id: climate.wohnzimmer_trv, profile: generic_trv}
         - {entity_id: climate.heizung_kessel, profile: generic_boiler}
       sensors:
         temperature: {entity_id: sensor.wohnzimmer_temp, profile: aqara_th}

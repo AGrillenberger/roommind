@@ -7,9 +7,12 @@ capabilities:
   target_temp_step: 0.5
   unit: C
 params:
-  radiator_capacity_kj_k: 30   # water + steel; with h_radiator_w_k gives tau ~10 min
-  h_radiator_w_k: 40           # radiator -> room at full surface temperature difference
-  flow_w_k: 200                # water heat flow at fully open valve
+  # Sized like an installer would: output at 55 °C supply / 20 °C room = design_factor x the
+  # room's heat load at design_outdoor_c. h_radiator_w_k in a scenario overrides the sizing.
+  design_factor: 1.3
+  design_outdoor_c: -12
+  flow_per_h: 1.5              # water heat flow at fully open valve per W/K of radiator (balanced system)
+  capacity_kj_per_h: 1.75      # water + steel per W/K: warms up in ~12 min, cools in ~30 min
   supply_temp_c: 55            # used when no boiler master serves this device
   radiant_fraction: 0.3        # share of output going to the mass node
   sensor_bias: 0.04            # TRV head sees air + bias * (radiator - air), ~1 K at a hot radiator

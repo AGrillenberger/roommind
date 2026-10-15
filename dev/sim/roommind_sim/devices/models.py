@@ -33,9 +33,21 @@ class Trv(SimDevice):
         self.valve = 0.0
         self._next_report = 0.0
 
+    def _size(self, env: DeviceEnv) -> float:
+        """Radiator W/K: explicit, or sized to the room's heat load (output at 55/20 °C)."""
+        p = self.spec.params
+        if "h_radiator_w_k" in p:
+            return float(p["h_radiator_w_k"])
+        ua = env.zone.params.h_air_out + env.zone.params.h_mass_out
+        design_w = float(p.get("design_factor", 1.3)) * ua * (20.0 - float(p.get("design_outdoor_c", -12)))
+        ratio = float(p.get("flow_per_h", 1.5))
+        t_rad = (ratio * 55.0 + 20.0) / (ratio + 1.0)
+        return design_w / (t_rad - 20.0)
+
     def _physics(self, dt: float, env: DeviceEnv) -> dict[str, Gains]:
         p = self.spec.params
         z = env.zone
+        h_rad = self._size(env)
         if self.t_rad is None:
             self.t_rad = z.t_air
         reading = z.t_air + float(p.get("sensor_bias", 0.04)) * (self.t_rad - z.t_air)
@@ -47,9 +59,11 @@ class Trv(SimDevice):
             demand = clamp((self.target_c - reading) / float(p.get("p_band_k", 1.0)), 0.0, 1.0)
         self.valve = approach(self.valve, demand, 1.0 / VALVE_TRAVEL_S, dt)
         supply = env.supply_temp_c if env.supply_temp_c is not None else float(p.get("supply_temp_c", 55))
-        q_in = self.valve * float(p.get("flow_w_k", 200)) * max(0.0, supply - self.t_rad)
-        q_out = float(p.get("h_radiator_w_k", 40)) * (self.t_rad - z.t_air)
-        self.t_rad += dt * (q_in - q_out) / (float(p.get("radiator_capacity_kj_k", 30)) * 1000)
+        flow = float(p.get("flow_w_k", h_rad * float(p.get("flow_per_h", 1.5))))
+        capacity_j_k = float(p.get("radiator_capacity_kj_k", h_rad * float(p.get("capacity_kj_per_h", 1.75)))) * 1000
+        q_in = self.valve * flow * max(0.0, supply - self.t_rad)
+        q_out = h_rad * (self.t_rad - z.t_air)
+        self.t_rad += dt * (q_in - q_out) / capacity_j_k
         self.active = self.valve > 0.05 and q_in > 1.0
         self.hvac_action = "off" if self.hvac_mode == "off" else ("heating" if self.active else "idle")
         self.water_draw_w = q_in

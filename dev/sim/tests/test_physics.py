@@ -27,9 +27,13 @@ def test_radiator_responds_in_minutes():
     )
     dev = w.devices["climate.r_trv"]
     assert dev.call("set_temperature", {"temperature": 22, "hvac_mode": "heat"}, w.now).ok
+    zp = w.zones["r"].params
+    rated_w = 1.3 * (zp.h_air_out + zp.h_mass_out) * 32  # sized to the heat load at -12 °C, 55 °C supply
     run(w, 600)
     assert dev.valve > 0.9 and dev.active
-    assert 600 < dev.heat_output_w() < 1500  # radiator warmed up within 10 min
+    assert 0.4 * rated_w < dev.heat_output_w() < rated_w  # water and steel still warming up after 10 min
+    run(w, 1200)
+    assert dev.heat_output_w() > 0.7 * rated_w
     run(w, 2 * 3600)
     assert w.zones["r"].t_air > 19.0
 
