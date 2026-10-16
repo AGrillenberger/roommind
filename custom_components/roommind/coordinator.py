@@ -203,6 +203,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._entity_areas: set[str] = set()
         # Min-run enforcement: timestamp when current non-idle mode started
         self._mode_on_since: dict[str, float] = {}
+        # When the room last went idle; a setback device stays on for a while after it (#255)
+        self._idle_since: dict[str, float] = {}
         # Rooms whose previous mode no longer needs seeding from the devices (see infer_running_mode)
         self._mode_seeded: set[str] = set()
         # Sensor dropout fallback: last valid temperature per room
@@ -743,6 +745,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             if seeded not in (None, MODE_IDLE):
                 self._previous_modes[area_id] = seeded
                 self._mode_on_since[area_id] = time.time()
+                self._idle_since.pop(area_id, None)
                 if seeded == MODE_COOLING:
                     # The unit has been cooling for a while: the air already sits below the mass
                     self._rebound_tracker.seed_running(area_id)
@@ -780,6 +783,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             settings=settings,
             previous_mode=self._previous_modes.get(area_id, MODE_IDLE),
             mode_on_since=self._mode_on_since.get(area_id),
+            idle_since=self._idle_since.get(area_id),
             has_external_sensor=has_external_sensor,
             target_resolver=target_resolver,
             q_solar=self._current_q_solar,
@@ -1364,6 +1368,10 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             self._mode_on_since[area_id] = time.time()
         elif mode == MODE_IDLE:
             self._mode_on_since.pop(area_id, None)
+        if mode == MODE_IDLE:
+            self._idle_since.setdefault(area_id, time.time())
+        else:
+            self._idle_since.pop(area_id, None)
         self._previous_modes[area_id] = mode
 
         # Compute display mode: show actual device state when RoomMind doesn't
@@ -2037,6 +2045,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._cover_orchestrator.remove_room(area_id)
         self._entity_areas.discard(area_id)
         self._mode_on_since.pop(area_id, None)
+        self._idle_since.pop(area_id, None)
         self._mode_seeded.discard(area_id)
         self._switch_entity_areas.discard(area_id)
         self._climate_control_switch_areas.discard(area_id)

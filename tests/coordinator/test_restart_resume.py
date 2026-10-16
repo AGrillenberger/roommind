@@ -155,3 +155,25 @@ def test_rebound_tracker_seeded_run_starts_charged():
     tracker = AcReboundTracker()
     tracker.seed_running("r")
     assert tracker.get_charge("r") == pytest.approx(1.0, abs=1e-3)
+
+
+@pytest.mark.asyncio
+async def test_seeded_run_drops_an_old_idle_start(hass, mock_config_entry, monkeypatch):
+    """A run adopted from the devices is a run: the setback hold must not count the idle before it (#255)."""
+    coordinator, room = await _first_cycle(hass, mock_config_entry, _state("unavailable", None))
+    assert room["mode"] == MODE_IDLE
+    coordinator._idle_since[AREA] -= 7200
+    seen: list[float | None] = []
+    real = mpc_controller.MPCController
+
+    def spy(*a, **kw):
+        seen.append(kw.get("idle_since"))
+        return real(*a, **kw)
+
+    monkeypatch.setattr("custom_components.roommind.coordinator.MPCController", spy)
+    hass.states.get = MagicMock(
+        side_effect=lambda eid: _state("heat", "heating") if eid == TRV else make_mock_states_get(temp="20.9")(eid)
+    )
+    await coordinator._async_update_data()
+
+    assert seen == [None]

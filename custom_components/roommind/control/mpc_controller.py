@@ -517,6 +517,7 @@ async def async_idle_device(
     targets: TargetTemps | None = None,
     force_off: bool = False,
     use_setpoint_offset: bool = True,
+    release_setback: frozenset[str] = frozenset(),
 ) -> None:
     """Idle a climate device per its configured idle_action.
 
@@ -528,6 +529,10 @@ async def async_idle_device(
 
     ``use_setpoint_offset`` lets the setback keep a direct device's sensor
     offset (#369); the controller turns it off in Managed mode.
+
+    ``release_setback`` lists the hvac modes (``"heat"``/``"cool"``) the MPC plan
+    expects no run of for ``SETBACK_RELEASE_BLOCKS``; a setback device in one of
+    them is turned off instead of being held at the setback target (#255).
 
     ``force_off`` marks an explicit user request to shut the room down
     (schedule_off_action / presence_away_action = "off").  It outranks the
@@ -569,6 +574,16 @@ async def async_idle_device(
     if idle_action == IDLE_ACTION_SETBACK:
         state = hass.states.get(entity_id)
         current_hvac = state.state if state else None
+
+        if current_hvac in release_setback:
+            _LOGGER.debug(
+                "Area '%s': no %s run planned for '%s' within the hour, setback ends in off",
+                area_id,
+                current_hvac,
+                entity_id,
+            )
+            await async_turn_off_climate(hass, entity_id, area_id=area_id, fallback_setpoint=fallback_temp)
+            return
 
         if current_hvac not in ("heat", "cool") or targets is None:
             _LOGGER.debug(
@@ -769,6 +784,12 @@ MAX_HORIZON_HOURS = 12
 HORIZON_MULTIPLIER = 2.5
 DEFAULT_OUTDOOR_TEMP_FALLBACK = 10.0
 SAFETY_GUARD_MIN_BLOCKS = 6  # Minimum guard horizon (30 min floor)
+# Setback bridges short pauses (#87). After SETBACK_HOLD_MINUTES of idle a setback device
+# is switched off if the plan has no run of its kind for SETBACK_RELEASE_BLOCKS (#255).
+# The plan alone is no gate: after an AC heating run it saw an hour of idle where the
+# room called for heat again after 15-30 min (sim multisplit-setback-release).
+SETBACK_HOLD_MINUTES = 60
+SETBACK_RELEASE_BLOCKS = 12
 GUARD_PREDICTION_MARGIN = 0.2  # °C margin for prediction-based guard bypass
 HARD_OVERSHOOT_CEILING = 1.0  # °C — model-independent max overshoot before forced idle
 # A fast system only starts once the room is this far past the target: the optimizer
@@ -1118,6 +1139,7 @@ class MPCController:
         q_residual: float = 0.0,
         heating_system_type: str = "",
         mode_on_since: float | None = None,
+        idle_since: float | None = None,
         shading_factor: float = 1.0,
         q_occupancy: float = 0.0,
         q_rebound: float | None = None,
@@ -1150,6 +1172,7 @@ class MPCController:
         self._run_system = heating_system_type
         self._previous_heat_sources = previous_heat_sources
         self._mode_on_since = mode_on_since
+        self._idle_since = idle_since
         self._shading_factor = shading_factor
         self.q_occupancy = q_occupancy
         # AC rebound charge now (residual_heat); None leaves the air/mass term out
@@ -1159,6 +1182,8 @@ class MPCController:
         # Strictest heat / cool target within the MPC guard window (set by _evaluate_mpc)
         self._lead_heat: float | None = None
         self._lead_cool: float | None = None
+        # hvac modes whose setback devices may switch off (set by _evaluate_mpc)
+        self._setback_release: frozenset[str] = frozenset()
 
         s = settings or {}
         self._mpc_enabled = is_mpc_enabled(s)
@@ -1200,6 +1225,7 @@ class MPCController:
             targets = TargetTemps(heat=t, cool=t) if t is not None else TargetTemps(heat=None, cool=None)
 
         self._lead_heat = self._lead_cool = None
+        self._setback_release = frozenset()
         if not self.has_external_sensor:
             mode = self._evaluate_managed_mode(targets)
             return mode, 1.0  # managed mode: device self-regulates
@@ -1254,6 +1280,12 @@ class MPCController:
         system = self._run_system if mode == MODE_HEATING else ""
         min_run_seconds = get_min_run_blocks(system, PLAN_DT_MINUTES) * PLAN_DT_MINUTES * 60
         return (time.time() - self._mode_on_since) < min_run_seconds
+
+    def _setback_hold_over(self) -> bool:
+        """Whether the room has been idle long enough for a setback device to switch off."""
+        if self.previous_mode != MODE_IDLE or self._idle_since is None:
+            return False
+        return time.time() - self._idle_since >= SETBACK_HOLD_MINUTES * 60
 
     def _resolve_run_system(self, current_temp: float | None, heat_target: float | None) -> str:
         """Heating system whose run rules (min run, drift pre-heat, no start hysteresis) apply.
@@ -1433,7 +1465,7 @@ class MPCController:
         self._lead_heat = max(lead_heat) if lead_heat else None
         self._lead_cool = min(lead_cool) if lead_cool else None
         outdoor_now = outdoor_series[0]
-        return decide_mpc_action(
+        action = decide_mpc_action(
             plan.get_current_action(),
             plan.get_current_power_fraction(),
             current_temp,
@@ -1455,6 +1487,12 @@ class MPCController:
             ),
             area_id=self._area_id,
         )
+        if action[0] == MODE_IDLE and self._setback_hold_over() and len(plan.actions) >= SETBACK_RELEASE_BLOCKS:
+            ahead = plan.actions[:SETBACK_RELEASE_BLOCKS]
+            self._setback_release = frozenset(
+                hvac for hvac, run in (("heat", MODE_HEATING), ("cool", MODE_COOLING)) if run not in ahead
+            )
+        return action
 
     def _gentle_power(
         self, optimizer: MPCOptimizer, mode: str, current_temp: float, outdoor_temp: float, target: float
@@ -2121,6 +2159,7 @@ class MPCController:
                     targets=targets,
                     use_setpoint_offset=self.has_external_sensor,
                     force_off=force_off,
+                    release_setback=self._setback_release,
                 )
 
     async def _call_and_record(
