@@ -9,6 +9,13 @@
 # Python tools come from $ROOMMIND_VENV (default: .venv in the repo root).
 set -uo pipefail
 
+# Share one CPU budget with all other sim and check runs if the host defines the slice
+# (dev/sim/README.md, "CPU cap"); without it everything runs as before.
+slice="${ROOMMIND_CPU_SLICE:-roommind-heavy.slice}"
+if [[ $EUID -eq 0 ]] && ! grep -q "/$slice/" /proc/self/cgroup 2>/dev/null && systemctl cat "$slice" &>/dev/null; then
+  exec systemd-run --scope --quiet --slice="$slice" "$0" "$@"
+fi
+
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 VENV="${ROOMMIND_VENV:-$ROOT/.venv}"

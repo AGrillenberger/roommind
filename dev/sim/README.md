@@ -169,6 +169,21 @@ runs one simulated day twice.
   finished runs while all runs exceed 2 GB; screenshots older than 3 days go too.
   Running runs and runs younger than 6 hours are never touched.
 
+## CPU cap
+
+Every batch run keeps one core busy, so several agents running suites at once can
+saturate the machine. If a systemd slice `roommind-heavy.slice` exists (name via
+`ROOMMIND_CPU_SLICE`), `bin/sim` and `dev/check` re-run themselves in it as root, and
+live instances are started in it; all of them then share the slice's `CPUQuota`.
+Runs only get slower, batch results stay the same (see Reproducibility). Without the
+slice nothing changes.
+
+```ini
+# /etc/systemd/system/roommind-heavy.slice, then systemctl daemon-reload
+[Slice]
+CPUQuota=400%
+```
+
 ## Tests
 
 ```bash

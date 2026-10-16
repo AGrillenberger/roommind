@@ -194,6 +194,7 @@ def start_live(inst: Instance, python: Path, extra: list[str], ttl_s: int) -> st
                 f"--property=RuntimeMaxSec={ttl_s}",
                 "--property=MemoryMax=1500M",
                 "--property=Nice=5",
+                *_cpu_slice(),
                 f"--working-directory={SIM_ROOT}",
                 *setenv,
                 *cmd,
@@ -259,6 +260,13 @@ def _pid_alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _cpu_slice() -> list[str]:
+    """Live instances join the CPU cap of bin/sim, they are started outside its scope."""
+    name = os.environ.get("ROOMMIND_CPU_SLICE", "roommind-heavy.slice")
+    found = subprocess.run(["systemctl", "cat", name], capture_output=True, check=False).returncode == 0
+    return [f"--slice={name}"] if found else []
 
 
 def _systemd_available() -> bool:
