@@ -19,6 +19,8 @@ params:
   sensor_offset_cool_k: 0.0
   sensor_offset_tau_s: 120     # offset builds up / fades over minutes, not at the compressor edge
   internal_min_run_s: 180
+  min_off_s: 180               # restart delay after a stop (anti-short-cycle timer, 3 min in service manuals)
+  capacity_tau_s: 0            # output lag after start; real units 40-76 s (cycling tests), off by default (SplitAc)
   cop_heat: [3.2, 0.06]        # cop = a + b * T_out
   eer: 3.5
   shr: 0.75                    # sensible heat ratio while cooling (rest dehumidifies)

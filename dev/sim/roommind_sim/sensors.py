@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass, field
 from typing import Any
@@ -16,6 +17,8 @@ class SimSensor:
     value: float | None = None  # last reported (what HA shows)
     last_report: float = -1e12
     unavailable_until: float = 0.0  # epoch; inf = until made available again
+    sensed: float | None = None  # element temperature behind the housing (``time_constant_s``)
+    sensed_at: float = 0.0
     _rng: random.Random = field(init=False)
 
     def __post_init__(self) -> None:
@@ -31,6 +34,14 @@ class SimSensor:
     def update(self, true_value: float, now: float, boot_time: float) -> bool:
         """Feed the true value; returns True when the reported state changed."""
         p = self.spec.params
+        tau = float(p.get("time_constant_s", 0.0))
+        if tau > 0:
+            if self.sensed is None:
+                self.sensed = true_value
+            else:
+                self.sensed += (true_value - self.sensed) * (1 - math.exp(-max(0.0, now - self.sensed_at) / tau))
+            self.sensed_at = now
+            true_value = self.sensed
         if now - boot_time < float(p.get("unavailable_after_start_s", 0)):
             return False
         noise = float(p.get("noise", 0.0))
@@ -50,12 +61,20 @@ class SimSensor:
         return False
 
     def snapshot(self) -> dict[str, Any]:
-        return {"value": self.value, "last_report": self.last_report, "unavailable_until": self.unavailable_until}
+        return {
+            "value": self.value,
+            "last_report": self.last_report,
+            "unavailable_until": self.unavailable_until,
+            "sensed": self.sensed,
+            "sensed_at": self.sensed_at,
+        }
 
     def restore(self, data: dict[str, Any]) -> None:
         self.value = data.get("value")
         self.last_report = data.get("last_report", -1e12)
         self.unavailable_until = data.get("unavailable_until", 0.0)
+        self.sensed = data.get("sensed")
+        self.sensed_at = data.get("sensed_at", 0.0)
 
 
 @dataclass

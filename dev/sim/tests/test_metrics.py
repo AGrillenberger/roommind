@@ -160,6 +160,7 @@ def test_cover_metrics_count_moves_and_shading_per_local_day():
     m = _cover_metrics(run, "cover.r", "r")
     assert m["commands"] == 4  # the rejected one does not count
     assert m["max_commands_per_day"] == 2
+    assert m["max_commands_per_day_unattended"] == 2
     assert m["commands_per_day"] == pytest.approx(2.0)
     assert m["shaded_h"] == pytest.approx(4.0)
     assert m["mean_shaded_position"] == pytest.approx((3 * 40 + 60) / 4)
@@ -204,3 +205,13 @@ def test_truth_beta_device_per_running_share():
     assert _truth_beta_device(run, "r", 3.6e6, "cooling") == pytest.approx(1.0)
     run.samples = run.samples[:1]
     assert _truth_beta_device(run, "r", 3.6e6, "heating") is None
+
+
+def test_cover_moves_on_a_day_with_a_manual_move_are_left_out_of_the_unattended_count():
+    run = _cover_run(48, {12: 40, 15: 100, 30: 60}, {13: 700.0}, heating=set())
+    run.events.append(
+        {"t": run.start + 3600 * 13, "type": "action", "action": "cover.manual", "args": {"entity_id": "cover.r"}}
+    )
+    m = _cover_metrics(run, "cover.r", "r")
+    assert m["max_commands_per_day"] == 2
+    assert m["max_commands_per_day_unattended"] == 1

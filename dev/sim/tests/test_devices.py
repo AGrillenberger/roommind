@@ -164,3 +164,36 @@ def test_snapshot_restore_roundtrip():
     run(w2, 600)
     assert abs(w.zones["r"].t_air - w2.zones["r"].t_air) < 1e-9
     assert w2.devices["climate.d"].quirks[0].sent
+
+
+def test_split_ac_output_ramps_up_after_the_compressor_starts():
+    w, d = _one("generic_split_ac", temp=28.0, capacity_tau_s=75)
+    d.call("set_temperature", {"temperature": 16, "hvac_mode": "cool"}, w.now)
+    run(w, 80)
+    assert d.running_mode == "cool" and d.modulation == pytest.approx(1.0)
+    assert 0.55 < d.output < 0.7  # first-order lag: ~63 % after one time constant
+    run(w, 600)
+    assert d.output > 0.99
+
+
+def test_split_ac_coil_stops_cooling_once_switched_off():
+    w, d = _one("generic_split_ac", temp=28.0, capacity_tau_s=75)
+    d.call("set_temperature", {"temperature": 16, "hvac_mode": "cool"}, w.now)
+    run(w, 600)
+    d.call("set_hvac_mode", {"hvac_mode": "off"}, w.now)
+    run(w, 10)
+    assert d.output == 0.0
+
+
+def test_split_ac_waits_for_its_restart_delay():
+    w, d = _one("generic_split_ac", temp=28.0, min_off_s=180)
+    d.call("set_temperature", {"temperature": 16, "hvac_mode": "cool"}, w.now)
+    run(w, 300)
+    d.call("set_hvac_mode", {"hvac_mode": "off"}, w.now)
+    run(w, 30)
+    d.call("set_hvac_mode", {"hvac_mode": "cool"}, w.now)
+    run(w, 60)
+    assert d.running_mode is None and d.hvac_action == "idle"
+    run(w, 120)
+    assert d.running_mode == "cool"
+    assert d.counters.starts == 2

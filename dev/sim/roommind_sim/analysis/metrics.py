@@ -225,6 +225,8 @@ def _cover_metrics(run: RunData, eid: str, area: str) -> dict[str, Any]:
     Manual moves from the timeline are world actions, not service calls, so only
     RoomMind's own commands count; ``earliest_first_move_h`` / ``mean_first_move_h``
     are the local time (decimal hours) of the first command of a day.
+    ``max_commands_per_day_unattended`` leaves out days with a timeline
+    ``cover.manual`` on this cover (RoomMind reacting to it is expected).
     ``mean_shaded_position`` averages the position while shading (below
     ``COVER_SHADED_BELOW``). ``sunny_days_unshaded`` counts days with a GHI
     peak of at least ``SUNNY_GHI_W_M2`` on which the cover never shaded within
@@ -238,6 +240,13 @@ def _cover_metrics(run: RunData, eid: str, area: str) -> dict[str, Any]:
 
     cmds = [c for c in run.commands if c["entity_id"] == eid and str(c.get("result", "")).startswith("accepted")]
     per_day = Counter(day(c["t"]) for c in cmds)
+    manual_days = {
+        day(e["t"])
+        for e in run.events
+        if e.get("type") == "action"
+        and e.get("action") == "cover.manual"
+        and (e.get("args") or {}).get("entity_id") == eid
+    }
     first_move: dict[str, float] = {}
     for c in cmds:
         local = datetime.fromtimestamp(c["t"], tz)
@@ -267,6 +276,7 @@ def _cover_metrics(run: RunData, eid: str, area: str) -> dict[str, Any]:
         "commands": len(cmds),
         "commands_per_day": round(len(cmds) / days, 2),
         "max_commands_per_day": max(per_day.values(), default=0),
+        "max_commands_per_day_unattended": max((n for d, n in per_day.items() if d not in manual_days), default=0),
         "earliest_first_move_h": round(min(first_move.values()), 2) if first_move else None,
         "mean_first_move_h": round(sum(first_move.values()) / len(first_move), 2) if first_move else None,
         "shaded_h": round(shaded_h, 2),

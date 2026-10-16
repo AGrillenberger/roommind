@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+import pytest
 from helpers import run, world
 
 from roommind_sim.physics.psychro import abs_humidity, rel_humidity
@@ -114,3 +115,21 @@ def test_shower_raises_humidity_and_airing_lowers_it():
 def test_psychro_roundtrip():
     x = abs_humidity(21.0, 55.0)
     assert math.isclose(rel_humidity(21.0, x), 55.0, rel_tol=1e-6)
+
+
+def test_sensor_housing_lags_the_air():
+    from roommind_sim.scenario.model import SensorSpec
+    from roommind_sim.sensors import SimSensor
+
+    spec = SensorSpec(
+        entity_id="sensor.t",
+        kind="temperature",
+        room="r",
+        name="t",
+        params={"resolution": 0.01, "time_constant_s": 600, "report": {"min_delta": 0.0}},
+    )
+    s = SimSensor(spec, seed=1)
+    s.update(20.0, 0.0, -1e9)
+    for t in range(10, 610, 10):
+        s.update(21.0, float(t), -1e9)
+    assert s.value == pytest.approx(20.63, abs=0.02)  # ~63 % of the step after one time constant

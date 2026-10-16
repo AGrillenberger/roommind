@@ -134,7 +134,16 @@ class SplitAc(SimDevice):
 
     The return-air offset builds up and fades with ``sensor_offset_tau_s``: warm air
     collects at the intake while the compressor runs and is still there right after
-    it stops."""
+    it stops.
+
+    ``capacity_tau_s`` lags the delivered output behind the compressor (inverter soft
+    start, refrigerant and coil pull-down; the coil also keeps working briefly after a
+    stop). ``min_off_s`` is the restart delay after a stop (anti-short-cycle timer).
+
+    Real units ramp up with a time constant of 40-76 s (DOE/AHRI cycling tests). The
+    profile keeps ``capacity_tau_s`` at 0: the room's air node reacts 2-4x faster than
+    real rooms to an AC, and together with the lag that turns into short cycles and a
+    mislearned model that real data do not show."""
 
     model = "ac"
 
@@ -143,6 +152,9 @@ class SplitAc(SimDevice):
         self.running_mode: str | None = None  # "heat" | "cool" while the compressor runs
         self.on_since = 0.0
         self.modulation = 0.0
+        self.output = 0.0  # delivered share of capacity, lags the compressor
+        self.output_mode: str | None = None
+        self.off_since = -1e12
         self.coil_water_kg = 0.0
         self.sensor_offset_k = 0.0
 
@@ -204,7 +216,12 @@ class SplitAc(SimDevice):
             commanded_stop = self.hvac_mode == "off" or not self.available or (wanted is not None)
             if commanded_stop or self.hvac_mode in ("fan_only",) or env.now - self.on_since >= min_run:
                 self.running_mode = None
-        if self.running_mode is None and wanted is not None:
+                self.off_since = env.now
+        if (
+            self.running_mode is None
+            and wanted is not None
+            and env.now - self.off_since >= float(p.get("min_off_s", 0))
+        ):
             self.running_mode = wanted
             self.on_since = env.now
         heat_w = 0.0
@@ -218,15 +235,31 @@ class SplitAc(SimDevice):
                 err = max(0.0, reading - self.target_c)
             lo = float(p.get("min_modulation", 0.3))
             self.modulation = 0.4 if self.hvac_mode == "dry" else clamp(lo + float(p.get("kp", 0.6)) * err, lo, 1.0)
-            if self.running_mode == "heat":
+        else:
+            self.modulation = 0.0
+        if self.running_mode and self.output_mode not in (None, self.running_mode):
+            self.output = 0.0  # reversing the cycle starts from scratch
+        tau = float(p.get("capacity_tau_s", 0.0))
+        if tau <= 0:
+            self.output = self.modulation
+        else:
+            self.output += (self.modulation - self.output) * (1 - math.exp(-dt / tau))
+        if self.running_mode:
+            self.output_mode = self.running_mode
+        elif self.output < 1e-3 or self.hvac_mode == "off" or not self.available:
+            # with the indoor fan stopped the cold coil no longer reaches the room
+            self.output, self.output_mode = 0.0, None
+        out_mode = self.output_mode
+        if out_mode and self.output > 0:
+            if out_mode == "heat":
                 cap = float(p.get("heat_capacity_w", 3500)) * max(
                     0.3, 1 - float(p.get("heat_derate_per_k", 0.02)) * max(0.0, 7 - t_out)
                 )
-                heat_w = cap * self.modulation
+                heat_w = cap * self.output
                 a, b = p.get("cop_heat", [3.2, 0.06])
                 electric = heat_w / max(1.5, a + b * t_out)
             else:
-                q = float(p.get("cool_capacity_w", 3500)) * self.modulation
+                q = float(p.get("cool_capacity_w", 3500)) * self.output
                 shr = 0.5 if self.hvac_mode == "dry" else float(p.get("shr", 0.75))
                 electric = q / float(p.get("eer", 3.5))
                 if z.x > abs_humidity(COIL_TEMP_C, 100):
@@ -236,8 +269,8 @@ class SplitAc(SimDevice):
                     heat_w = -q * shr
                 else:
                     heat_w = -q
-        else:
-            self.modulation = 0.0
+        if not self.running_mode:
+            electric = 0.0  # what the coil still delivers after a stop costs no compressor power
             if self.coil_water_kg > 0:
                 rate = 3e-5 if self.hvac_mode == "fan_only" else 3e-6  # kg/s re-evaporation / drain
                 evap = min(self.coil_water_kg, rate * dt)
@@ -261,6 +294,9 @@ class SplitAc(SimDevice):
         return {
             "running_mode": self.running_mode,
             "on_since": self.on_since,
+            "off_since": self.off_since,
+            "output": self.output,
+            "output_mode": self.output_mode,
             "coil_water_kg": self.coil_water_kg,
             "sensor_offset_k": self.sensor_offset_k,
         }
@@ -268,6 +304,9 @@ class SplitAc(SimDevice):
     def _restore_model_state(self, data: dict[str, Any]) -> None:
         self.running_mode = data.get("running_mode")
         self.on_since = data.get("on_since", 0.0)
+        self.off_since = data.get("off_since", -1e12)
+        self.output = data.get("output", 0.0)
+        self.output_mode = data.get("output_mode")
         self.coil_water_kg = data.get("coil_water_kg", 0.0)
         self.sensor_offset_k = data.get("sensor_offset_k", 0.0)
 
