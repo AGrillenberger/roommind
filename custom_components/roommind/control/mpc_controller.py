@@ -59,7 +59,7 @@ from ..utils.device_utils import (
     has_reliable_hvac_modes,
 )
 from ..utils.temp_utils import celsius_delta_to_ha, celsius_to_ha_temp
-from .mpc_optimizer import MPCOptimizer, MPCPlan, slow_start_penalty
+from .mpc_optimizer import MPCOptimizer, MPCPlan, preheat_max_blocks, slow_start_penalty
 from .residual_heat import get_min_run_blocks, mean_rebound
 from .thermal_model import RoomModelManager
 
@@ -1170,6 +1170,7 @@ class MPCController:
         cw = s.get("comfort_weight", 70)
         self._w_comfort = max(1.0, cw / 10.0)
         self._w_energy = max(1.0, (100 - cw) / 10.0)
+        self._preheat_max_blocks = preheat_max_blocks(cw, PLAN_DT_MINUTES)
         self._approach_rate = min(1.0, APPROACH_RATE_MIN + (1.0 - APPROACH_RATE_MIN) * cw / DEFAULT_COMFORT_WEIGHT)
         self._ac_boost_delta = min(
             AC_BOOST_DELTA_MAX,
@@ -1387,6 +1388,7 @@ class MPCController:
             approach_rate=self._approach_rate,
             start_penalty=slow_start_penalty(min_run, PLAN_DT_MINUTES),
             fast_heater_shares_model=check_acs_can_heat(self.hass, self.room_config),
+            preheat_max_blocks=self._preheat_max_blocks,
         )
 
         plan = optimizer.optimize(

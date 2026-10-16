@@ -347,7 +347,7 @@
   "settings.comfort_weight": "Priority",
   "settings.comfort_weight_comfort": "Comfort",
   "settings.comfort_weight_efficiency": "Efficiency",
-  "settings.comfort_weight_hint": "Balances temperature precision against energy use. Comfort reacts earlier and stays closer to target. Efficiency allows more drift to reduce heating/cooling runtime.",
+  "settings.comfort_weight_hint": "Balances temperature precision against energy use. Comfort reacts earlier and stays closer to target. Efficiency allows more drift to reduce heating/cooling runtime. At the default and above, rooms are heated up ahead of a schedule block so they are warm when it starts; below the default it starts later, at full efficiency only shortly before the block.",
   "settings.weather_entity": "Weather Forecast",
   "settings.weather_entity_hint": "Optional: enables predictive outdoor temperature planning, and acts as a fallback when the outdoor sensor is unavailable",
   "settings.outdoor_unavailable_notify": "Notify when outdoor temperature is unavailable",

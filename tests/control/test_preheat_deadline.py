@@ -139,3 +139,39 @@ def test_an_eco_holding_run_does_not_turn_into_an_early_preheat():
     plan = _plan(medium, 17.6, rise_at=72, n=96, initial_mode=MODE_HEATING)
     assert plan.actions[0] == MODE_IDLE
     assert plan.preheat_blocks == 0
+
+
+def test_slider_limits_the_preheat_lead():
+    from custom_components.roommind.control.mpc_optimizer import preheat_max_blocks
+
+    assert preheat_max_blocks(70) is None
+    assert preheat_max_blocks(100) is None
+    assert preheat_max_blocks(35) == 72  # 6 h
+    assert preheat_max_blocks(0) == 0
+
+
+@pytest.mark.parametrize(
+    ("limit", "expected"), [(None, MODE_HEATING), (48, MODE_HEATING), (24, MODE_IDLE), (0, MODE_IDLE)]
+)
+def test_efficiency_setting_starts_no_earlier_than_allowed(limit, expected):
+    """Comfort 3 h out needs ~4 h: full comfort pre-heats now, efficiency waits."""
+    opt = MPCOptimizer(SLOW, can_heat=True, can_cool=False, preheat_max_blocks=limit)
+    plan = opt.optimize(
+        T_room=18.0,
+        T_outdoor_series=[0.0] * 72,
+        heat_target_series=[17.5] * 36 + [20.0] * 36,
+        dt_minutes=5,
+    )
+    assert plan.actions[0] == expected
+
+
+def test_controller_and_analytics_take_the_limit_from_the_slider():
+    ctrl = MPCController(
+        build_hass(),
+        make_room(),
+        model_manager=RoomModelManager(),
+        outdoor_temp=0.0,
+        settings={"comfort_weight": 0},
+        has_external_sensor=True,
+    )
+    assert ctrl._preheat_max_blocks == 0

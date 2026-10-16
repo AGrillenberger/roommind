@@ -347,7 +347,7 @@
   "settings.comfort_weight": "Priorität",
   "settings.comfort_weight_comfort": "Komfort",
   "settings.comfort_weight_efficiency": "Effizienz",
-  "settings.comfort_weight_hint": "Gewichtet Temperaturgenauigkeit gegen Energieverbrauch. Komfort reagiert früher und bleibt näher am Zielwert. Effizienz erlaubt mehr Abweichung, um Heiz- und Kühllaufzeiten zu reduzieren.",
+  "settings.comfort_weight_hint": "Gewichtet Temperaturgenauigkeit gegen Energieverbrauch. Komfort reagiert früher und bleibt näher am Zielwert. Effizienz erlaubt mehr Abweichung, um Heiz- und Kühllaufzeiten zu reduzieren. Ab der Standardeinstellung heizt RoomMind vor einem Zeitplanblock vor, damit der Raum zum Beginn warm ist; darunter beginnt es später, ganz auf Effizienz erst kurz vor dem Block.",
   "settings.weather_entity": "Wettervorhersage",
   "settings.weather_entity_hint": "Optional: ermöglicht vorausschauende Außentemperaturplanung und dient als Fallback wenn der Außensensor nicht verfügbar ist",
   "settings.outdoor_unavailable_notify": "Hinweis bei fehlender Außentemperatur",

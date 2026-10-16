@@ -32,7 +32,7 @@ from .mpc_controller import (
     is_mpc_enabled,
     is_slow_heat,
 )
-from .mpc_optimizer import MPCOptimizer, slow_start_penalty
+from .mpc_optimizer import MPCOptimizer, preheat_max_blocks, slow_start_penalty
 from .residual_heat import (
     advance_rebound,
     build_residual_series,
@@ -398,6 +398,7 @@ def _simulate_mpc(
                 approach_rate=approach_rate,
                 start_penalty=start_penalty,
                 fast_heater_shares_model=acs_can_heat,
+                preheat_max_blocks=preheat_max_blocks(cw, PLAN_DT_MINUTES),
             )
             plan = optimizer.optimize(
                 T_room=T,

@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass, field
 
 from ..const import (
+    DEFAULT_COMFORT_WEIGHT,
     HEATING_SYSTEM_PROFILES,
     MIN_POWER_FRACTION,
     MODE_COOLING,
@@ -27,6 +28,17 @@ LOOKAHEAD_HORIZON_SCALE = 1.0
 PREHEAT_DEADLINE_MARGIN = 0.1
 # A running pre-heat continues while waiting this long (1 h) would miss the target.
 PREHEAT_CONTINUE_BLOCKS = 12
+# Pre-heat lead at the default comfort weight; the slider scales it down to 0 at full efficiency.
+PREHEAT_MAX_LEAD_HOURS = 12.0
+
+
+def preheat_max_blocks(comfort_weight: float, dt_minutes: float = 5.0) -> int | None:
+    """Pre-heat lead the comfort/efficiency slider allows: the default and above
+    plan up to the horizon, towards efficiency the lead shrinks to none."""
+    if comfort_weight >= DEFAULT_COMFORT_WEIGHT:
+        return None
+    hours = PREHEAT_MAX_LEAD_HOURS * max(0.0, comfort_weight) / DEFAULT_COMFORT_WEIGHT
+    return int(hours * 60 / dt_minutes)
 
 
 def slow_start_penalty(min_run_blocks: int, dt_minutes: float = 5.0) -> float:
@@ -105,6 +117,8 @@ class MPCOptimizer:
     # A heat-capable AC heats the room too, so the learned heating rate is not the screed's
     fast_heater_shares_model: bool = False
     start_penalty: float = 0.0  # comfort-weighted cost of starting a heating/cooling run (#429)
+    # Longest pre-heat lead the deadline may plan (blocks); None = up to the horizon.
+    preheat_max_blocks: int | None = None
 
     def __post_init__(self) -> None:
         # Set before optimize() runs so callers / patched optimize() still expose
@@ -363,6 +377,8 @@ class MPCOptimizer:
         """
         n = len(heat_target_series)
         now = heat_target_series[i]
+        if self.preheat_max_blocks is not None:
+            n = min(n, i + self.preheat_max_blocks + 1)
         rise = next((j for j in range(i + 1, n) if heat_target_series[j] > max(now, T_room)), None)
         if rise is None:
             return 0

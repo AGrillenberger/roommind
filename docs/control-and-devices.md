@@ -9,6 +9,15 @@ In `Settings -> Control -> Priority`, the slider balances comfort against runtim
 - Toward `Comfort`: RoomMind reacts earlier and works harder to stay close to the target temperature.
 - Toward `Efficiency`: RoomMind allows more drift around the target to reduce heating/cooling runtime.
 
+### Pre-heating
+
+When a schedule block raises the target (for example eco 17 °C until 06:00, then 21 °C), RoomMind works out from the learned room model how long the room needs to heat up and starts early enough for the room to be warm when the block begins. Rooms whose radiators need hours to recover from a night setback start correspondingly early.
+
+- At the default position and toward `Comfort`, pre-heating may start up to 12 hours ahead.
+- Below the default, the longest pre-heat lead shrinks with the slider; at full `Efficiency` RoomMind only heats shortly before the block, as before v1.7.9. The room then reaches the comfort temperature some time after the block has started, which uses a little less energy.
+- Underfloor heating uses its own pre-heating that accounts for the heat stored in the screed.
+- `Simple` control mode does not pre-heat.
+
 This setting does **not** change your schedule targets, overrides, comfort temperature, or eco temperature. It only changes how aggressively MPC tries to reach and hold those targets.
 
 ## Thermostat vs Climate Device

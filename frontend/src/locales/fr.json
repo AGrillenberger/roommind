@@ -347,7 +347,7 @@
   "settings.comfort_weight": "Priorité",
   "settings.comfort_weight_comfort": "Confort",
   "settings.comfort_weight_efficiency": "Efficacité",
-  "settings.comfort_weight_hint": "Équilibre la précision de la température avec la consommation d'énergie. Le confort réagit plus tôt et reste plus proche de la cible. L'efficacité permet plus de dérive pour réduire la durée de chauffage/refroidissement.",
+  "settings.comfort_weight_hint": "Équilibre la précision de la température avec la consommation d'énergie. Le confort réagit plus tôt et reste plus proche de la cible. L'efficacité permet plus de dérive pour réduire la durée de chauffage/refroidissement. À partir du réglage par défaut, RoomMind préchauffe avant une plage horaire pour que la pièce soit chaude à son début ; en dessous, il commence plus tard, et en pleine efficacité seulement peu avant la plage.",
   "settings.weather_entity": "Prévision météo",
   "settings.weather_entity_hint": "Optionnel : active la planification prédictive de la température extérieure et sert de secours lorsque le capteur extérieur est indisponible",
   "settings.outdoor_unavailable_notify": "Notifier lorsque la température extérieure est indisponible",
