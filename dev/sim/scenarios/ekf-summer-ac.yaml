@@ -22,10 +22,10 @@ roommind:
     wohnzimmer: {covers_auto_enabled: false}
 timeline: []
 expect:
-  # seeds 1-3 learn 1.7-2.0 (truth ~1.3); 0.3-3.1 before the rebound term
+  # seeds 1-3 learn 2.05-2.2 (truth ~1.3); 0.3-3.1 before the rebound term
   - {metric: model.learned_beta_s, room: wohnzimmer, max: 3.0, label: solar gain stays near the truth with a strong AC}
-  # seeds 1-3 learn 0.0075-0.0135 (truth 0.0148); 0.5-1.6 before the rebound term
+  # seeds 1-3 learn 0.0058-0.0152 (truth 0.0148); 0.5-1.6 before the rebound term
   - {metric: model.learned_alpha_per_h, room: wohnzimmer, min: 0.005, max: 0.05, label: loss rate of the whole room, not of the air node}
   # 5.2-5.8 Kh with cooling starting 0.1 K past the target (seeds 1, 2), ~14 Kh with 0.2 K;
-  # 5.3-5.6 Kh with the rebound term
+  # 5.3-5.6 Kh with the rebound term, 7.2-8.0 (seeds 1-3) with the AC's 3-min restart delay
   - {metric: comfort.overshoot_kh, room: wohnzimmer, max: 9, label: cooling keeps the room near its target}
