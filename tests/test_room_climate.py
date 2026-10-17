@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,7 +22,7 @@ from custom_components.roommind.const import DOMAIN
 
 TRV = {"entity_id": "climate.trv", "type": "trv"}
 AC = {"entity_id": "climate.ac", "type": "ac"}
-NEXT_EVENT = datetime(2026, 10, 17, 18, 0, tzinfo=UTC)
+NEXT_EVENT = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) + timedelta(days=1)
 
 
 def _room(**overrides):
