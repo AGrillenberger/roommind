@@ -20,8 +20,10 @@ from homeassistant.components.climate import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import area_registry as ar
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -56,8 +58,14 @@ _CLIMATE_MODE_TO_HVAC = {
     CLIMATE_MODE_COOL_ONLY: HVACMode.COOL,
 }
 _HVAC_TO_CLIMATE_MODE = {hvac: mode for mode, hvac in _CLIMATE_MODE_TO_HVAC.items()}
-_OVERRIDE_TO_PRESET: dict[str, str] = {OVERRIDE_BOOST: PRESET_COMFORT, OVERRIDE_ECO: PRESET_ECO}
-_PRESET_TO_OVERRIDE: dict[str, str] = {preset: override for override, preset in _OVERRIDE_TO_PRESET.items()}
+# A held temperature from the slider, a display or a voice assistant
+PRESET_MANUAL = "manual"
+_OVERRIDE_TO_PRESET: dict[str, str] = {
+    OVERRIDE_BOOST: PRESET_COMFORT,
+    OVERRIDE_ECO: PRESET_ECO,
+    OVERRIDE_CUSTOM: PRESET_MANUAL,
+}
+_PRESET_TO_OVERRIDE: dict[str, str] = {PRESET_COMFORT: OVERRIDE_BOOST, PRESET_ECO: OVERRIDE_ECO}
 
 
 def _create_room_climates(
@@ -347,13 +355,35 @@ class RoomMindRoomClimate(CoordinatorEntity, ClimateEntity):
     _attr_target_temperature_step = 0.5
     _attr_min_temp = MIN_TARGET_TEMP
     _attr_max_temp = MAX_TARGET_TEMP
-    _attr_preset_modes = [PRESET_NONE, PRESET_COMFORT, PRESET_ECO]
+    _attr_translation_key = "room"
+    _attr_preset_modes = [PRESET_NONE, PRESET_COMFORT, PRESET_ECO, PRESET_MANUAL]
 
     def __init__(self, coordinator: RoomMindCoordinator, area_id: str) -> None:
         super().__init__(coordinator)
         self._area_id = area_id
         self._attr_unique_id = f"{DOMAIN}_{area_id}_climate"
         self.entity_id = f"climate.{DOMAIN}_{area_id}"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._assign_area_once()
+
+    @callback
+    def _assign_area_once(self) -> None:
+        """Put the entity into its room's area the first time it appears (area cards, Assist).
+
+        Marked in the entity's registry options, so an area the user removes or changes stays that way.
+        """
+        registry = er.async_get(self.hass)
+        entry = registry.async_get(self.entity_id)
+        if entry is None:
+            return
+        options = dict(entry.options.get(DOMAIN, {}))
+        if options.get("area_assigned"):
+            return
+        if entry.area_id is None and ar.async_get(self.hass).async_get_area(self._area_id) is not None:
+            registry.async_update_entity(self.entity_id, area_id=self._area_id)
+        registry.async_update_entity_options(self.entity_id, DOMAIN, {**options, "area_assigned": True})
 
     def _store(self) -> Any:
         return self.coordinator.hass.data[DOMAIN]["store"]
@@ -551,7 +581,12 @@ class RoomMindRoomClimate(CoordinatorEntity, ClimateEntity):
             await self._async_set_override(*band, OVERRIDE_CUSTOM)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
-        """Comfort/eco hold until the next schedule change, none returns to the schedule."""
+        """Comfort/eco hold until the next schedule change, manual holds the band in force, none returns to the schedule."""
+        if preset_mode == PRESET_MANUAL:
+            heat, cool = self._band()
+            if self.preset_mode != PRESET_MANUAL and (heat is not None or cool is not None):
+                await self._async_set_override(heat, cool, OVERRIDE_CUSTOM)
+            return
         override_type = _PRESET_TO_OVERRIDE.get(preset_mode)
         if override_type is not None:
             await self._async_set_override(*override_preset_band(self._room(), override_type), override_type)
@@ -570,6 +605,7 @@ class RoomMindRoomClimate(CoordinatorEntity, ClimateEntity):
             return
         if hvac_mode == HVACMode.OFF:
             await self.coordinator.async_turn_room_off(self._area_id)
+            self.async_write_ha_state()
             return
         changes: dict[str, Any] = {"climate_control_enabled": True}
         climate_mode = _HVAC_TO_CLIMATE_MODE.get(hvac_mode)

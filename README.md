@@ -124,13 +124,17 @@ These can be used in HA automations, dashboards, or other integrations.
 | Climate feature | In RoomMind |
 |---|---|
 | Target temperature (range in Auto mode) | The targets currently in force. Changing it sets an override that holds until the next change of the active schedule, like a thermostat's temporary hold. Without a schedule it holds until you pick the preset `none`. Sending the value already in force changes nothing. A single temperature in Auto mode (e.g. from a voice assistant) sets the heating side and keeps the cooling side at least at comfort cooling. |
-| Presets `comfort` / `eco` | Comfort or eco override, also until the next schedule change. `none` returns to the schedule. |
+| Presets Comfort / Eco | Comfort or eco override, also until the next schedule change |
+| Preset Manual | Shown while a custom temperature is held (set here, in the panel or on the old override entity); picking it holds the targets in force until the next schedule change |
+| Preset Schedule (`none`) | Ends the override and returns to the schedule |
 | HVAC mode `heat` / `cool` / `heat_cool` | Climate mode Heat only / Cool only / Auto, and turns control on. `climate.turn_on` turns control on and keeps the climate mode. |
 | HVAC mode `off` | Switches the room's devices off and stops controlling them |
 | `hvac_action` | What RoomMind is doing: `heating`, `cooling`, `idle` or `off` |
 | Current temperature and humidity | The room's readings |
 
-Attributes: `override_until`, `window_open`, `presence_away`, `vacation`.
+Attributes: `override_until`, `window_open`, `presence_away`, `vacation`. An open window shows as `idle` with `window_open: true`.
+
+The entity is placed in the room's area once when it is created, so it shows up on area cards and Assist finds it by the area ("set the temperature in the living room to 22"). An area you change or remove later is kept. For voice control, hide the room's own thermostats and ACs from Assist (Settings → Voice assistants → Expose), otherwise Assist finds several climate entities in the room and cannot pick one.
 
 Like every override, one set here also lifts the outdoor temperature limits for heating and cooling while it lasts.
 

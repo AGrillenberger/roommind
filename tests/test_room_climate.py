@@ -85,7 +85,8 @@ def setup():
             coordinator.data = {"rooms": {"living_room": live}}
         return RoomMindRoomClimate(coordinator, "living_room")
 
-    with patch.object(RoomMindRoomClimate, "async_write_ha_state"):
+    with patch.object(RoomMindRoomClimate, "async_write_ha_state") as write:
+        coordinator.write_state = write
         yield make, coordinator, store, states
 
 
@@ -203,7 +204,7 @@ def test_targets_from_store_while_override_active(setup):
     entity = make(_room(override_heat=22.5, override_cool=25.0, override_type="custom"))
     assert entity.target_temperature_low == 22.5
     assert entity.target_temperature_high == 25.0
-    assert entity.preset_mode is None
+    assert entity.preset_mode == "manual"
 
 
 def test_suppressed_override_shows_live_band(setup):
@@ -360,6 +361,7 @@ async def test_hvac_off_switches_room_off(setup):
     await make().async_set_hvac_mode(HVACMode.OFF)
     coordinator.async_turn_room_off.assert_awaited_once_with("living_room")
     store.async_update_room.assert_not_awaited()
+    coordinator.write_state.assert_called_once()
 
 
 @pytest.mark.parametrize(
@@ -512,3 +514,105 @@ async def test_same_mode_leaves_the_held_band_alone(setup):
     entity = make(_room(override_heat=22.0, override_cool=25.0, override_type="custom", climate_control_enabled=False))
     await entity.async_set_hvac_mode(HVACMode.HEAT_COOL)
     assert _written(store) == {"climate_control_enabled": True, "climate_mode": "auto"}
+
+
+def test_manual_preset_is_offered(setup):
+    make, *_ = setup
+    assert make().preset_modes == ["none", "comfort", "eco", "manual"]
+
+
+@pytest.mark.asyncio
+async def test_manual_preset_holds_the_band_in_force(setup):
+    make, _, store, _ = setup
+    await make(live=_live(heat_target=20.0, cool_target=25.0)).async_set_preset_mode("manual")
+    assert _written(store) == {
+        "override_heat": 20.0,
+        "override_cool": 25.0,
+        "override_until": NEXT_EVENT.timestamp(),
+        "override_type": "custom",
+    }
+
+
+@pytest.mark.asyncio
+async def test_manual_preset_turns_a_comfort_hold_into_manual(setup):
+    make, _, store, _ = setup
+    entity = make(_room(override_heat=21.0, override_cool=24.0, override_type="boost"))
+    await entity.async_set_preset_mode("manual")
+    assert (_written(store)["override_heat"], _written(store)["override_type"]) == (21.0, "custom")
+
+
+@pytest.mark.asyncio
+async def test_manual_preset_while_manual_changes_nothing(setup):
+    make, _, store, _ = setup
+    entity = make(_room(override_heat=22.0, override_cool=25.0, override_type="custom", override_until=None))
+    await entity.async_set_preset_mode("manual")
+    store.async_update_room.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_manual_preset_without_targets_changes_nothing(setup):
+    make, _, store, _ = setup
+    entity = make(live=_live(heat_target=None, cool_target=None, force_off=True))
+    await entity.async_set_preset_mode("manual")
+    store.async_update_room.assert_not_awaited()
+
+
+class TestAreaAssignment:
+    """The room entity lands in its room's area once (#238, #83)."""
+
+    @staticmethod
+    def _run(setup, *, area_id=None, options=None, area_exists=True, entry_exists=True):
+        make, coordinator, _, _ = setup
+        entity = make()
+        entity.hass = coordinator.hass
+        entry = MagicMock()
+        entry.area_id = area_id
+        entry.options = {DOMAIN: options} if options is not None else {}
+        registry = MagicMock()
+        registry.async_get.return_value = entry if entry_exists else None
+        areas = MagicMock()
+        areas.async_get_area.return_value = MagicMock() if area_exists else None
+        with (
+            patch("custom_components.roommind.climate.er.async_get", return_value=registry),
+            patch("custom_components.roommind.climate.ar.async_get", return_value=areas),
+        ):
+            entity._assign_area_once()
+        return registry
+
+    def test_first_time_assigns_area_and_marks_it(self, setup):
+        registry = self._run(setup)
+        registry.async_update_entity.assert_called_once_with("climate.roommind_living_room", area_id="living_room")
+        registry.async_update_entity_options.assert_called_once_with(
+            "climate.roommind_living_room", DOMAIN, {"area_assigned": True}
+        )
+
+    def test_already_marked_leaves_a_removed_area_alone(self, setup):
+        registry = self._run(setup, options={"area_assigned": True})
+        registry.async_update_entity.assert_not_called()
+        registry.async_update_entity_options.assert_not_called()
+
+    def test_area_chosen_by_the_user_stays(self, setup):
+        registry = self._run(setup, area_id="kitchen")
+        registry.async_update_entity.assert_not_called()
+        registry.async_update_entity_options.assert_called_once()
+
+    def test_missing_area_only_marks(self, setup):
+        registry = self._run(setup, area_exists=False)
+        registry.async_update_entity.assert_not_called()
+        registry.async_update_entity_options.assert_called_once()
+
+    def test_no_registry_entry_does_nothing(self, setup):
+        registry = self._run(setup, entry_exists=False)
+        registry.async_update_entity_options.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_added_to_hass_assigns_the_area(setup):
+    make, coordinator, *_ = setup
+    entity = make()
+    with (
+        patch("homeassistant.helpers.update_coordinator.CoordinatorEntity.async_added_to_hass", new=AsyncMock()),
+        patch.object(RoomMindRoomClimate, "_assign_area_once") as assign,
+    ):
+        await entity.async_added_to_hass()
+    assign.assert_called_once()
