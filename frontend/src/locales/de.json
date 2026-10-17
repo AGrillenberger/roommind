@@ -101,6 +101,8 @@
   "card.tap_configure": "Tippen zum Konfigurieren",
   "card.mpc_active": "MPC aktiv",
   "card.mpc_learning": "MPC lernt",
+  "card.compressor_min_run": "Mindestlauf {minutes} Min",
+  "card.compressor_min_off": "Mindestpause {minutes} Min",
   "card.not_controlled": "Nicht von RoomMind gesteuert",
   "mode.auto": "Automatisch",
   "mode.auto_desc": "Heizt und kühlt automatisch basierend auf der Zieltemperatur",

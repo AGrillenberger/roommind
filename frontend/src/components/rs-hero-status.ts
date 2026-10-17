@@ -1,7 +1,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { HomeAssistant, HassArea, RoomConfig, OverrideType } from "../types";
-import { getModeClass, formatMode } from "../utils/room-state";
+import { getModeClass, formatMode, minutesLeft } from "../utils/room-state";
 import { modeStyles } from "../styles/shared-mode-styles";
 import { localize } from "../utils/localize";
 import { formatTemp, tempUnit, toDisplayDelta } from "../utils/temperature";
@@ -358,12 +358,6 @@ export class RsHeroStatus extends LitElement {
     return null;
   }
 
-  /** Whole minutes left, floored at 1 so the badge never reads "0 min". */
-  private _minutesLeft(until: number | null): number {
-    if (until == null) return 1;
-    return Math.max(1, Math.ceil((until * 1000 - Date.now()) / 60000));
-  }
-
   private _renderTargetSection(live: NonNullable<RoomConfig["live"]>) {
     const targetTemp = live.target_temp;
     const l = this.hass?.language ?? "en";
@@ -669,7 +663,7 @@ export class RsHeroStatus extends LitElement {
                               ? "hero.compressor_protection_min_off_left"
                               : "hero.compressor_protection_min_off",
                           this.hass?.language ?? "en",
-                          { minutes: this._minutesLeft(live.compressor_protection_until) },
+                          { minutes: minutesLeft(live.compressor_protection_until) },
                         )}
                         <rs-info-icon
                           icon="mdi:information-outline"
@@ -688,7 +682,7 @@ export class RsHeroStatus extends LitElement {
                         ${localize(
                           live.coil_dry_phase === "drain" ? "hero.coil_dry_drain" : "hero.coil_dry",
                           this.hass?.language ?? "en",
-                          { minutes: this._minutesLeft(live.coil_dry_until) },
+                          { minutes: minutesLeft(live.coil_dry_until) },
                         )}
                         <rs-info-icon
                           icon="mdi:information-outline"

@@ -101,6 +101,8 @@
   "card.tap_configure": "Tocca per configurare",
   "card.mpc_active": "MPC attivo",
   "card.mpc_learning": "MPC in apprendimento",
+  "card.compressor_min_run": "Funz. minimo {minutes} min",
+  "card.compressor_min_off": "Pausa minima {minutes} min",
   "card.not_controlled": "Non controllata da RoomMind",
   "mode.auto": "Auto",
   "mode.auto_desc": "Riscalda e raffresca automaticamente in base alla temperatura obiettivo",

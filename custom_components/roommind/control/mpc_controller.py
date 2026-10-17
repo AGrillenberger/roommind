@@ -210,6 +210,11 @@ def match_fan_mode(state: Any, desired: str) -> str | None:
     return None
 
 
+def is_hold_throttled(entity_id: str) -> bool:
+    """True once the compressor hold throttled this device or passed it the plain target."""
+    return entity_id in _hold_modulated
+
+
 def _target_moved(previous: float | None, current: float | None) -> bool:
     if previous is None or current is None:
         return previous is not current

@@ -34,6 +34,7 @@ from .const import (
     MAX_PREDICTION_DELTA,
     MAX_SENSOR_STALENESS,
     MAX_TARGET_TEMP,
+    MIN_POWER_FRACTION,
     MIN_TARGET_TEMP,
     MODE_COOLING,
     MODE_HEATING,
@@ -57,6 +58,7 @@ from .control.mpc_controller import (
     check_acs_can_heat,
     get_can_heat_cool,
     infer_running_mode,
+    is_hold_throttled,
     is_mpc_active,
 )
 from .control.residual_heat import mean_rebound
@@ -213,6 +215,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._mode_on_since: dict[str, float] = {}
         # When the room last went idle; a setback device stays on for a while after it (#255)
         self._idle_since: dict[str, float] = {}
+        # Power of each room's last heating/cooling tick; a compressor hold keeps that run's setpoint (#452)
+        self._last_run_pf: dict[str, float] = {}
         # Rooms whose previous mode no longer needs seeding from the devices (see infer_running_mode)
         self._mode_seeded: set[str] = set()
         # Sensor dropout fallback: last valid temperature per room
@@ -1350,7 +1354,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # the step is skipped and the charge follows the unit actually running.
         hold_running: str | None = None
         if climate_active and has_external_sensor and compressor_held and ekf_mode == MODE_IDLE:
-            obs_mode, _ = self._observe_device_action(room)
+            obs_mode, _ = self._observe_device_action(room, compressor_held)
             if obs_mode in (MODE_HEATING, MODE_COOLING):
                 hold_running = obs_mode
 
@@ -1404,6 +1408,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             self._idle_since.setdefault(area_id, time.time())
         else:
             self._idle_since.pop(area_id, None)
+            self._last_run_pf[area_id] = power_fraction
         self._previous_modes[area_id] = mode
 
         # Compute display mode: show actual device state when RoomMind doesn't
@@ -1420,6 +1425,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     if held_mode is None:
                         held_mode = self._infer_device_mode(room, compressor_held)
                         held_pf = 1.0 if held_mode != MODE_IDLE else 0.0
+                    if held_mode != MODE_IDLE:
+                        if any(is_hold_throttled(eid) for eid in compressor_held):
+                            held_pf = MIN_POWER_FRACTION
+                        else:
+                            held_pf = self._last_run_pf.get(area_id, held_pf)
                     display_mode, display_pf = held_mode, held_pf
             else:
                 # Managed Mode: show observed/inferred device state (#69)
@@ -2172,6 +2182,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._entity_areas.discard(area_id)
         self._mode_on_since.pop(area_id, None)
         self._idle_since.pop(area_id, None)
+        self._last_run_pf.pop(area_id, None)
         self._mode_seeded.discard(area_id)
         self._switch_entity_areas.discard(area_id)
         self._climate_control_switch_areas.discard(area_id)

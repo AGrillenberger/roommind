@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from custom_components.roommind.const import MODE_HEATING, MODE_IDLE
+from custom_components.roommind.const import MIN_POWER_FRACTION, MODE_HEATING, MODE_IDLE
 
 from .conftest import (
     SAMPLE_ROOM,
@@ -581,6 +581,46 @@ class TestHoldShowsTheRunningUnit:
         assert before + 14 * 60 < room["compressor_protection_until"] <= time.time() + 15 * 60
 
     @pytest.mark.asyncio
+    async def test_held_unit_shows_the_power_of_the_run_it_holds(self, hass, mock_config_entry):
+        """The unit keeps the setpoint of the last run, so the room shows that run's power."""
+        from custom_components.roommind.control.mpc_controller import MPCController
+
+        coordinator = await _setup(hass, mock_config_entry)
+        ac = {"state": _ac_state("off", 16.0)}
+        _wire_states(hass, ac, temp="18.0")
+        with patch.object(MPCController, "async_evaluate", AsyncMock(return_value=(MODE_HEATING, 0.4))):
+            data = await coordinator._async_update_data()
+        assert data["rooms"][AREA]["heating_power"] == 40
+        boost = _calls(hass, "set_temperature")[-1][0][2]["temperature"]
+
+        ac["state"] = self._with(_ac_state("heat", boost), hvac_action="heating")
+        _wire_states(hass, ac, temp="21.3")
+        _age_mode(coordinator)
+        data = await coordinator._async_update_data()
+
+        assert data["rooms"][AREA]["mode"] == MODE_HEATING
+        assert data["rooms"][AREA]["heating_power"] == 40
+
+    @pytest.mark.asyncio
+    async def test_throttled_unit_shows_minimum_power(self, hass, mock_config_entry):
+        """Past target + margin the hold throttles the unit to minimum; the power follows (#416)."""
+        coordinator = await _setup(hass, mock_config_entry)
+        ac = {"state": _ac_state("off", 16.0)}
+        _wire_states(hass, ac, temp="18.0")
+        await coordinator._async_update_data()
+        boost = _calls(hass, "set_temperature")[-1][0][2]["temperature"]
+
+        ac["state"] = self._with(_ac_state("heat", boost), hvac_action="heating")
+        hass.services.async_call.reset_mock()
+        _wire_states(hass, ac, temp="22.5")
+        _age_mode(coordinator)
+        data = await coordinator._async_update_data()
+
+        assert [c[0][2]["temperature"] for c in _calls(hass, "set_temperature")] == [22.5]
+        assert data["rooms"][AREA]["mode"] == MODE_HEATING
+        assert data["rooms"][AREA]["heating_power"] == round(MIN_POWER_FRACTION * 100)
+
+    @pytest.mark.asyncio
     async def test_unit_idling_on_its_own_sensor_shows_idle(self, hass, mock_config_entry):
         room, _ = await self._hold(
             hass, mock_config_entry, lambda sp: self._with(_ac_state("heat", sp), hvac_action="idle")
@@ -629,6 +669,41 @@ class TestHoldShowsTheRunningUnit:
 
         assert data["rooms"][AREA]["compressor_protection_reason"] == "min_run"
         assert data["rooms"][AREA]["mode"] == MODE_IDLE
+
+    @pytest.mark.asyncio
+    async def test_training_pause_also_looks_at_the_held_unit_only(self, hass, mock_config_entry):
+        """#436 skips EKF training while the held unit runs; a TRV without hvac_action must not hide that."""
+        trv = "climate.living_room"
+        room_cfg = {
+            **AC_ROOM,
+            "thermostats": [trv],
+            "devices": [
+                {"entity_id": trv, "type": "trv", "role": "auto", "heating_system_type": ""},
+                {"entity_id": AC, "type": "ac", "role": "auto", "heating_system_type": ""},
+            ],
+        }
+        coordinator = await _setup(hass, mock_config_entry, room=room_cfg)
+        ac = {"state": _ac_state("off", 16.0)}
+        trv_state = _ac_state("heat", 30.0)
+
+        def _wire(temp):
+            base = make_mock_states_get(temp=temp)
+            hass.states.get = MagicMock(
+                side_effect=lambda eid: ac["state"] if eid == AC else trv_state if eid == trv else base(eid)
+            )
+
+        _wire("18.0")
+        await coordinator._async_update_data()
+        boost = _calls(hass, "set_temperature")[-1][0][2]["temperature"]
+        ac["state"] = self._with(_ac_state("heat", boost), hvac_action="heating")
+        coordinator._ekf_training.process = MagicMock()
+        coordinator.outdoor_temp_effective = 5.0
+        _wire("21.3")
+        _age_mode(coordinator)
+        data = await coordinator._async_update_data()
+
+        assert data["rooms"][AREA]["compressor_protection_reason"] == "min_run"
+        coordinator._ekf_training.process.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_min_off_wait_has_time_left(self, hass, mock_config_entry):
