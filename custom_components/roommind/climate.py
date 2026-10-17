@@ -32,6 +32,7 @@ from .const import (
     CLIMATE_MODE_COOL_ONLY,
     CLIMATE_MODE_HEAT_ONLY,
     DEFAULT_COMFORT_COOL,
+    DEFAULT_COMFORT_HEAT,
     DOMAIN,
     MAX_TARGET_TEMP,
     MIN_TARGET_TEMP,
@@ -138,6 +139,15 @@ def _band_from_temperature_call(
     # collapse to a single point (that is the cycling bug). Derive a
     # dead-band identically to the store migration.
     return single, max(single, room.get("comfort_cool", DEFAULT_COMFORT_COOL))
+
+
+def _fill_auto_band(heat: float | None, cool: float | None, room: dict) -> tuple[float | None, float | None]:
+    """Give a one-sided band its missing side, the way a bare temperature widens in auto."""
+    if heat is not None and cool is None:
+        cool = max(heat, room.get("comfort_cool", DEFAULT_COMFORT_COOL))
+    elif cool is not None and heat is None:
+        heat = min(cool, room.get("comfort_heat", room.get("comfort_temp", DEFAULT_COMFORT_HEAT)))
+    return heat, cool
 
 
 class RoomMindOverrideClimate(CoordinatorEntity, ClimateEntity):
@@ -440,12 +450,16 @@ class RoomMindRoomClimate(CoordinatorEntity, ClimateEntity):
         """The band the room is held at, without mold prevention (not part of the user's band)."""
         room = self._room()
         if self._override_in_force():
-            return room.get("override_heat"), room.get("override_cool")
-        live = self._live()
-        heat = live.get("heat_target")
-        if heat is not None and live.get("mold_prevention_active"):
-            heat -= live.get("mold_prevention_delta") or 0
-        return heat, live.get("cool_target")
+            heat, cool = room.get("override_heat"), room.get("override_cool")
+        else:
+            live = self._live()
+            heat, cool = live.get("heat_target"), live.get("cool_target")
+            if heat is not None and live.get("mold_prevention_active"):
+                heat -= live.get("mold_prevention_delta") or 0
+        if self._climate_mode() == CLIMATE_MODE_AUTO:
+            # The dual slider sends both sides, HA rejects a call with only one of them
+            return _fill_auto_band(heat, cool, room)
+        return heat, cool
 
     @property
     def target_temperature(self) -> float | None:
@@ -561,6 +575,13 @@ class RoomMindRoomClimate(CoordinatorEntity, ClimateEntity):
         climate_mode = _HVAC_TO_CLIMATE_MODE.get(hvac_mode)
         if climate_mode is not None:
             changes["climate_mode"] = climate_mode
+            room = self._room()
+            if climate_mode != self._climate_mode() and is_override_active(room):
+                # A held band keeps fitting the mode: heat_only drops the cool side, auto needs both again
+                heat, cool = room.get("override_heat"), room.get("override_cool")
+                if climate_mode == CLIMATE_MODE_AUTO:
+                    heat, cool = _fill_auto_band(heat, cool, room)
+                changes["override_heat"], changes["override_cool"] = mask_override_band(heat, cool, climate_mode)
         await self._store().async_update_room(self._area_id, changes)
         self.async_write_ha_state()
         await self.coordinator.async_request_refresh()

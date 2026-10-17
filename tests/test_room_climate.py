@@ -468,3 +468,47 @@ async def test_outdoor_room_ignores_hvac_mode(setup):
     await entity.async_set_hvac_mode(HVACMode.HEAT)
     coordinator.async_turn_room_off.assert_not_awaited()
     store.async_update_room.assert_not_awaited()
+
+
+def test_one_sided_override_shows_both_sides_in_auto(setup):
+    """The dual slider sends both sides; a missing one made HA reject every drag."""
+    make, *_ = setup
+    entity = make(_room(override_heat=15.5, override_cool=None, override_type="custom"))
+    assert (entity.target_temperature_low, entity.target_temperature_high) == (15.5, 24.0)
+    entity = make(_room(override_heat=None, override_cool=26.0, override_type="custom"))
+    assert (entity.target_temperature_low, entity.target_temperature_high) == (21.0, 26.0)
+
+
+def test_live_band_missing_a_side_in_auto_is_filled(setup):
+    make, *_ = setup
+    entity = make(live=_live(heat_target=22.0, cool_target=None))
+    assert (entity.target_temperature_low, entity.target_temperature_high) == (22.0, 24.0)
+
+
+@pytest.mark.asyncio
+async def test_mode_change_to_auto_completes_the_held_band(setup):
+    make, _, store, _ = setup
+    entity = make(_room(climate_mode="heat_only", override_heat=15.5, override_cool=None, override_type="custom"))
+    await entity.async_set_hvac_mode(HVACMode.HEAT_COOL)
+    assert _written(store) == {
+        "climate_control_enabled": True,
+        "climate_mode": "auto",
+        "override_heat": 15.5,
+        "override_cool": 24.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_mode_change_to_heat_only_drops_the_cool_side(setup):
+    make, _, store, _ = setup
+    entity = make(_room(override_heat=22.0, override_cool=25.0, override_type="custom"))
+    await entity.async_set_hvac_mode(HVACMode.HEAT)
+    assert (_written(store)["override_heat"], _written(store)["override_cool"]) == (22.0, None)
+
+
+@pytest.mark.asyncio
+async def test_same_mode_leaves_the_held_band_alone(setup):
+    make, _, store, _ = setup
+    entity = make(_room(override_heat=22.0, override_cool=25.0, override_type="custom", climate_control_enabled=False))
+    await entity.async_set_hvac_mode(HVACMode.HEAT_COOL)
+    assert _written(store) == {"climate_control_enabled": True, "climate_mode": "auto"}
