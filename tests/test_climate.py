@@ -11,6 +11,7 @@ from homeassistant.components.climate import ClimateEntityFeature, HVACMode
 from custom_components.roommind.climate import (
     OVERRIDE_TURN_ON_REFRESH_DELAY_S,
     RoomMindOverrideClimate,
+    RoomMindRoomClimate,
     _create_room_climates,
     async_setup_entry,
 )
@@ -59,11 +60,10 @@ def _active_auto_room(**overrides):
 
 
 def test_create_room_climates(mock_coordinator):
-    """Factory creates exactly one climate entity per room."""
+    """Factory creates the deprecated override entity next to the room climate entity (#238)."""
     coordinator, _ = mock_coordinator
     climates = _create_room_climates(coordinator, "living_room")
-    assert len(climates) == 1
-    assert isinstance(climates[0], RoomMindOverrideClimate)
+    assert [type(c) for c in climates] == [RoomMindOverrideClimate, RoomMindRoomClimate]
 
 
 def test_unique_id_and_entity_id(mock_coordinator):
@@ -448,8 +448,8 @@ async def test_async_setup_entry_creates_entities_for_all_rooms():
     assert coordinator.async_add_climate_entities is async_add_entities
     async_add_entities.assert_called_once()
     entities = async_add_entities.call_args[0][0]
-    assert len(entities) == 2
-    assert all(isinstance(e, RoomMindOverrideClimate) for e in entities)
+    assert sum(isinstance(e, RoomMindOverrideClimate) for e in entities) == 2
+    assert sum(isinstance(e, RoomMindRoomClimate) for e in entities) == 2
     assert "living_room" in coordinator._climate_entity_areas
     assert "bedroom" in coordinator._climate_entity_areas
 

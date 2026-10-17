@@ -1,6 +1,7 @@
 {
   "domain": "roommind",
   "name": "RoomMind",
+  "after_dependencies": ["automation", "script"],
   "codeowners": ["@snazzybean"],
   "config_flow": true,
   "dependencies": ["http", "frontend"],

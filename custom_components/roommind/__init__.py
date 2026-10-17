@@ -19,6 +19,7 @@ from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN, PLATFORMS, VERSION
 from .coordinator import RoomMindCoordinator
+from .deprecation import async_schedule_deprecation_check
 from .store import RoomMindStore
 from .websocket_api import async_register_websocket_commands
 
@@ -54,6 +55,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Clean up orphaned entities (e.g. cover entities for rooms without covers)
     coordinator.cleanup_orphaned_entities()
+    async_schedule_deprecation_check(hass)
 
     await _async_register_panel(hass)
     await _async_check_version_mismatch(hass)

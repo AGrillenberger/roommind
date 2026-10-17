@@ -52,6 +52,7 @@ from .const import (
 from .control.mpc_controller import (
     DEFAULT_OUTDOOR_TEMP_FALLBACK,
     MPCController,
+    async_idle_device,
     check_acs_can_heat,
     get_can_heat_cool,
     infer_running_mode,
@@ -107,6 +108,7 @@ def _get_area_name(hass: HomeAssistant, area_id: str) -> str:
 # All suffixes end differently, so a given uid maps to exactly one
 # (area_id, suffix) pair — enabling unambiguous exact matching.
 ROOM_ENTITY_SUFFIXES = (
+    "_climate",
     "_target_temp",
     "_mode",
     "_override",
@@ -228,6 +230,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._block_temp_warned: set[tuple[str, str, str]] = set()
         # monotonic time at which the override entity seeded an override per room (#447)
         self._override_seeded_at: dict[str, float] = {}
+        # Rooms whose devices the next cycle switches off (room climate entity set to off)
+        self._rooms_to_switch_off: set[str] = set()
         self._switch_entity_areas: set[str] = set()
         self._climate_control_switch_areas: set[str] = set()
         self._binary_sensor_entity_areas: set[str] = set()
@@ -1034,10 +1038,13 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             can_activate=self._compressor_manager.check_can_activate,
         )
 
+        switch_off = area_id in self._rooms_to_switch_off and self._take_room_switch_off(area_id, climate_active)
         if not climate_active:
             # Climate control disabled — do NOT send commands.
             mode = MODE_IDLE
             power_fraction = 0.0
+            if switch_off:
+                await self._async_switch_devices_off(area_id, room.get("devices", []), targets)
         elif waiting_for_data:
             mode = MODE_IDLE
             power_fraction = 0.0
@@ -2076,6 +2083,37 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         await self.async_request_refresh()
 
+    async def async_turn_room_off(self, area_id: str) -> None:
+        """Stop controlling the room and have the next cycle switch its devices off (room climate entity off).
+
+        Off is sent from the cycle, where the targets for the idle fallback setpoint are known.
+        A cycle already running on an older snapshot leaves the request to the next one.
+        """
+        store = self.hass.data[DOMAIN]["store"]
+        await store.async_update_room(area_id, {"climate_control_enabled": False})
+        self._rooms_to_switch_off.add(area_id)
+        await self.async_request_refresh()
+
+    def _take_room_switch_off(self, area_id: str, climate_active: bool) -> bool:
+        """Return True when this cycle switches the room off; keep the request for a cycle on a stale snapshot."""
+        if climate_active:
+            current = self.hass.data[DOMAIN]["store"].get_room(area_id) or {}
+            if not current.get("climate_control_enabled", True):
+                # Switched off after this cycle took its snapshot: the next cycle sends it
+                return False
+        self._rooms_to_switch_off.discard(area_id)
+        return not climate_active
+
+    async def _async_switch_devices_off(self, area_id: str, devices: list[dict], targets: TargetTemps) -> None:
+        for entity_id in get_all_entity_ids(devices):
+            try:
+                await async_idle_device(self.hass, entity_id, devices, area_id=area_id, targets=targets, force_off=True)
+            except Exception:  # noqa: BLE001
+                _LOGGER.warning("Room '%s': switching '%s' off failed", area_id, entity_id, exc_info=True)
+                continue
+            # Control stays off, so no later cycle reports this member to its compressor group
+            self._compressor_manager.update_member(entity_id, False)
+
     async def async_room_removed(self, area_id: str) -> None:
         """Remove sensor entities for a deleted room and refresh data."""
         from homeassistant.helpers import entity_registry as er
@@ -2101,6 +2139,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._window_manager.remove_room(area_id)
         self._previous_modes.pop(area_id, None)
         self._override_seeded_at.pop(area_id, None)
+        self._rooms_to_switch_off.discard(area_id)
         self._last_valid_temps.pop(area_id, None)
         self._had_valid_temp.discard(area_id)
         self._startup_guard_warned.discard(area_id)

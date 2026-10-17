@@ -110,14 +110,42 @@ For a more detailed explanation of the `Priority` slider, device types, setpoint
 
 | Entity | Description |
 |--------|-------------|
-| `sensor.roommind_{area_id}_target_temp` | Current target temperature |
-| `sensor.roommind_{area_id}_mode` | Current mode: `idle`, `heating`, or `cooling` |
-| `climate.roommind_{area_id}_override` | Manual override climate entity (controllable from dashboards, automations, voice) |
+| `climate.roommind_{area_id}` | The room as one thermostat, see [Room climate entity](#room-climate-entity) |
 | `switch.roommind_vacation` | Global vacation mode toggle |
 | `switch.roommind_{area_id}_cover_auto` | Per-room automatic cover control toggle |
 | `binary_sensor.roommind_{area_id}_cover_paused` | On when manual cover override is detected |
 
 These can be used in HA automations, dashboards, or other integrations.
+
+### Room climate entity
+
+`climate.roommind_{area_id}` shows and controls a room the way a thermostat card, an automation or a voice assistant expects:
+
+| Climate feature | In RoomMind |
+|---|---|
+| Target temperature (range in Auto mode) | The targets currently in force. Changing it sets an override that holds until the next change of the active schedule, like a thermostat's temporary hold. Without a schedule it holds until you pick the preset `none`. Sending the value already in force changes nothing. A single temperature in Auto mode (e.g. from a voice assistant) sets the heating side and keeps the cooling side at least at comfort cooling. |
+| Presets `comfort` / `eco` | Comfort or eco override, also until the next schedule change. `none` returns to the schedule. |
+| HVAC mode `heat` / `cool` / `heat_cool` | Climate mode Heat only / Cool only / Auto, and turns control on. `climate.turn_on` turns control on and keeps the climate mode. |
+| HVAC mode `off` | Switches the room's devices off and stops controlling them |
+| `hvac_action` | What RoomMind is doing: `heating`, `cooling`, `idle` or `off` |
+| Current temperature and humidity | The room's readings |
+
+Attributes: `override_until`, `window_open`, `presence_away`, `vacation`.
+
+Like every override, one set here also lifts the outdoor temperature limits for heating and cooling while it lasts.
+
+A wall display or a thermostat RoomMind does not control can be linked with an automation: its setpoint → `climate.set_temperature` on the room entity, and the room entity's target → the display, so the display always shows what applies.
+
+### Deprecated entities
+
+These per-room entities still work but will be removed in a future release. If automations or scripts reference them directly, Home Assistant shows a repair notice listing them; uses inside templates or dashboards are not detected, but every service call to an old entity logs a warning once.
+
+| Old entity | Use instead |
+|---|---|
+| `sensor.roommind_{area_id}_target_temp` | Target temperature of `climate.roommind_{area_id}` |
+| `sensor.roommind_{area_id}_mode` | `hvac_action` of `climate.roommind_{area_id}` |
+| `climate.roommind_{area_id}_override` | `climate.set_temperature` or a preset on `climate.roommind_{area_id}`. Unlike the old entity, an override there ends at the next schedule change. |
+| `switch.roommind_{area_id}_climate_control` | `climate.turn_on` / `climate.turn_off` on `climate.roommind_{area_id}`. Unlike the old switch, off also switches the devices off. |
 
 ## Troubleshooting
 

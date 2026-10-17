@@ -328,6 +328,18 @@ def get_active_schedule_entity(
     return None
 
 
+def next_schedule_change(hass: HomeAssistant, room: dict) -> float | None:
+    """Return the timestamp of the active schedule's next block boundary, or None without one."""
+    entity_id = get_active_schedule_entity(hass, room)
+    state = hass.states.get(entity_id) if entity_id else None
+    raw = state.attributes.get("next_event") if state else None
+    if isinstance(raw, str):
+        raw = dt_util.parse_datetime(raw)
+    if not isinstance(raw, datetime):
+        return None
+    return raw.timestamp()
+
+
 async def read_schedule_blocks(
     hass: HomeAssistant,
     schedule_entity_id: str,
