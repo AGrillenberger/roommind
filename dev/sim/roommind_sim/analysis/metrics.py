@@ -13,6 +13,11 @@ from .load import RunData
 ACTIVE_MODES = ("heat", "cool", "heat_cool", "auto", "dry", "on")
 
 
+def decided_mode(room: dict[str, Any]) -> str | None:
+    """RoomMind's own decision; ``mode`` shows what a held unit does (#452)."""
+    return room.get("commanded_mode") or room.get("mode")
+
+
 def compute_metrics(run: RunData) -> dict[str, Any]:
     duration_h = max(1e-9, (run.end - run.start) / 3600)
     return {
@@ -112,7 +117,7 @@ def _room_metrics(run: RunData, area: str) -> dict[str, Any]:
         if (
             heat is not None
             and t_air < heat - IDLE_BELOW_TARGET_K
-            and room.get("mode") == "idle"
+            and decided_mode(room) == "idle"
             and not room.get("window_open")
         ):
             idle_below_since = idle_below_since if idle_below_since is not None else s["t"]
@@ -123,7 +128,7 @@ def _room_metrics(run: RunData, area: str) -> dict[str, Any]:
             above_band += max(0.0, t_air - heat - HEAT_BAND_K) * dt_h
             k = bisect_right(upcoming_t, s["t"]) - 1
             ref = max(heat, upcoming[k][1] or heat) if k >= 0 else heat
-            if room.get("compressor_protection_active") and room.get("mode") == "idle":
+            if room.get("compressor_protection_active") and decided_mode(room) == "idle":
                 hold_ref = max(ref, recent_heat[0][1])
                 hold_max = max(hold_max, t_air - hold_ref)
                 hold_kh += max(0.0, t_air - hold_ref - HEAT_BAND_K) * dt_h

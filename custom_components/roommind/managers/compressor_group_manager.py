@@ -126,6 +126,26 @@ class CompressorGroupManager:
         elapsed = monotonic() - state.compressor_on_since
         return elapsed < self._groups[group_id].min_run_seconds
 
+    def min_run_left(self, entity_id: str) -> float:
+        """Seconds until the group's compressor may stop (0 when not running or unknown)."""
+        group_id = self._entity_to_group.get(entity_id)
+        if group_id is None:
+            return 0.0
+        on_since = self._states[group_id].compressor_on_since
+        if on_since is None:
+            return 0.0
+        return max(0.0, self._groups[group_id].min_run_seconds - (monotonic() - on_since))
+
+    def min_off_left(self, entity_id: str) -> float:
+        """Seconds until the group's compressor may start again (0 when running or unknown)."""
+        group_id = self._entity_to_group.get(entity_id)
+        if group_id is None:
+            return 0.0
+        state = self._states[group_id]
+        if state.active_members or state.compressor_off_since is None:
+            return 0.0
+        return max(0.0, self._groups[group_id].min_off_seconds - (monotonic() - state.compressor_off_since))
+
     def update_member(self, entity_id: str, is_active: bool) -> None:
         """Update tracking after commands are sent."""
         group_id = self._entity_to_group.get(entity_id)

@@ -3,7 +3,9 @@ description: >
   One room, one split AC in a single-member compressor group (min run 15 min).
   Smoke test for the whole chain: RoomMind keeps the AC commanded on for the 15 min
   minimum run. The physical compressor check lives in compressor-hold-biased-sensor.
-refs: [436]
+  hold_shows_running_unit (#452): during the hold the room shows what the unit does
+  instead of idle, and the min-run time left.
+refs: [436, 452]
 tags: [smoke]
 start: 2026-01-12T00:00
 duration: 2d
@@ -50,6 +52,7 @@ timeline:
   - {at: "2026-01-12T18:00", do: window.open, entity_id: binary_sensor.wohnzimmer_fenster, for: 10m}
   - {at: "+1d", do: mark, label: day two}
 expect:
+  - {invariant: hold_shows_running_unit, label: dashboard shows the held unit heating plus the min-run time left (#452)}
   - {invariant: min_run_commanded}
   - {invariant: target_never_empty}
   - {metric: comfort.hold_heat_over_max_k, room: wohnzimmer, max: 2.0, label: held unit throttled past target + 0.5 K instead of boosting on (2.6 to 3.6 K before)}

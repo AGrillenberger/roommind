@@ -227,6 +227,36 @@ class TestRecentlyStarted:
         assert "climate.ac2" not in mgr.get_state("g1").member_started_at
 
 
+class TestTimeLeft:
+    def test_min_run_left_counts_down_while_running(self):
+        mgr = CompressorGroupManager()
+        mgr.load_groups([_make_group(min_run=15)])
+        mgr.update_member("climate.ac1", True)
+        mgr._states["g1"].compressor_on_since = time.monotonic() - 600
+        assert 299 < mgr.min_run_left("climate.ac1") <= 300
+        assert mgr.min_off_left("climate.ac1") == 0.0
+
+    def test_min_off_left_counts_down_after_stop(self):
+        mgr = CompressorGroupManager()
+        mgr.load_groups([_make_group(min_off=5)])
+        mgr.update_member("climate.ac1", True)
+        mgr.update_member("climate.ac1", False)
+        mgr._states["g1"].compressor_off_since = time.monotonic() - 120
+        assert 179 < mgr.min_off_left("climate.ac1") <= 180
+        assert mgr.min_run_left("climate.ac1") == 0.0
+
+    def test_nothing_left_when_expired_unknown_or_ungrouped(self):
+        mgr = CompressorGroupManager()
+        mgr.load_groups([_make_group(min_run=15)])
+        assert mgr.min_run_left("climate.ac1") == 0.0  # no known start (restart)
+        assert mgr.min_off_left("climate.ac1") == 0.0
+        mgr.update_member("climate.ac1", True)
+        mgr._states["g1"].compressor_on_since = time.monotonic() - 1200
+        assert mgr.min_run_left("climate.ac1") == 0.0
+        assert mgr.min_run_left("climate.other") == 0.0
+        assert mgr.min_off_left("climate.other") == 0.0
+
+
 class TestResolveMasterAction:
     def test_all_idle(self):
         assert resolve_master_action(["idle", "idle"], "heating_priority", None, 22) == "idle"

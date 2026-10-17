@@ -133,7 +133,7 @@ async def test_compressor_hold_with_running_unit_skips_training_and_keeps_chargi
         has_external_sensor=True,
         heat_source_plan=None,
         climate_active=True,
-        compressor_hold=hold,
+        compressor_held={"climate.living_room"} if hold else None,
     )
     assert training.called is trained
     assert (coordinator._rebound_tracker._cooling.get(room["area_id"]) is True) is hold

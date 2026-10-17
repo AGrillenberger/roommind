@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterable
 from datetime import timedelta
 from functools import partial
 from typing import Any
@@ -673,6 +674,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 "active_heat_sources": None,
                 "compressor_protection_active": False,
                 "compressor_protection_reason": None,
+                "compressor_protection_until": None,
                 "coil_dry_active": False,
                 "coil_dry_phase": None,
                 "coil_dry_until": None,
@@ -955,6 +957,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         compressor_forced_on: set[str] = set()
         compressor_forced_off: set[str] = set()
         compressor_protection_reason: str | None = None
+        compressor_protection_until: float | None = None
 
         # With a plan only devices with an active command run. Everything else is
         # parked, also a device the plan leaves out altogether (unknown state,
@@ -991,10 +994,15 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             # captured here, before the "fully blocked" branch below clears
             # compressor_forced_off — otherwise a room idled entirely by the
             # shared-compressor guard would silently look like a normal idle.
+            protection_left = 0.0
             if compressor_forced_off:
                 compressor_protection_reason = "min_off"
+                protection_left = max(self._compressor_manager.min_off_left(e) for e in compressor_forced_off)
             elif compressor_forced_on:
                 compressor_protection_reason = "min_run"
+                protection_left = max(self._compressor_manager.min_run_left(e) for e in compressor_forced_on)
+            if protection_left > 0:
+                compressor_protection_until = time.time() + protection_left
 
             # In cooling mode only ACs can cool, so TRVs must not prevent the IDLE
             # transition when all cooling-capable devices are blocked.  In heating
@@ -1175,7 +1183,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             heat_source_plan=heat_source_plan,
             climate_active=climate_active,
             coil_dry_skip_training=coil_dry.skip_ekf_training,
-            compressor_hold=bool(compressor_forced_on),
+            compressor_held=compressor_forced_on,
         )
 
         return self._build_room_state_dict(
@@ -1211,6 +1219,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             cover_result=cover_result,
             mpc_active=mpc_active,
             compressor_protection_reason=compressor_protection_reason,
+            compressor_protection_until=compressor_protection_until,
             coil_dry=coil_dry,
         )
 
@@ -1233,7 +1242,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         q_rebound: float | None = None,
         climate_active: bool,
         coil_dry_skip_training: bool = False,
-        compressor_hold: bool = False,
+        compressor_held: set[str] | None = None,
     ) -> tuple[str, float]:
         """Observe device state, train EKF, compute display mode.
 
@@ -1340,7 +1349,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Training that as idle drifts alpha and empties the rebound charge mid-run, so
         # the step is skipped and the charge follows the unit actually running.
         hold_running: str | None = None
-        if climate_active and has_external_sensor and compressor_hold and ekf_mode == MODE_IDLE:
+        if climate_active and has_external_sensor and compressor_held and ekf_mode == MODE_IDLE:
             obs_mode, _ = self._observe_device_action(room)
             if obs_mode in (MODE_HEATING, MODE_COOLING):
                 hold_running = obs_mode
@@ -1405,6 +1414,13 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 # Full Control: controller's mode is authoritative
                 display_mode = mode
                 display_pf = power_fraction
+                if compressor_held and mode == MODE_IDLE:
+                    # The room is satisfied, but the held unit keeps running until its min run ends (#452)
+                    held_mode, held_pf = self._observe_device_action(room, compressor_held)
+                    if held_mode is None:
+                        held_mode = self._infer_device_mode(room, compressor_held)
+                        held_pf = 1.0 if held_mode != MODE_IDLE else 0.0
+                    display_mode, display_pf = held_mode, held_pf
             else:
                 # Managed Mode: show observed/inferred device state (#69)
                 display_mode = managed_display_mode if managed_display_mode is not None else mode
@@ -1457,6 +1473,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         cover_result: CoverResult,
         mpc_active: bool,
         compressor_protection_reason: str | None = None,
+        compressor_protection_until: float | None = None,
         coil_dry: CoilDryRoomResult | None = None,
     ) -> dict:
         """Build the final room state dictionary."""
@@ -1560,6 +1577,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "active_heat_sources": self._heat_source_states.get(area_id),
             "compressor_protection_active": compressor_protection_reason is not None,
             "compressor_protection_reason": compressor_protection_reason,
+            "compressor_protection_until": compressor_protection_until,
             "coil_dry_active": bool(coil_dry and coil_dry.active),
             "coil_dry_phase": coil_dry.phase if coil_dry else None,
             "coil_dry_until": coil_dry.until if coil_dry else None,
@@ -1681,7 +1699,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     continue
         return None
 
-    def _observe_device_action(self, room: dict) -> tuple[str | None, float]:
+    def _observe_device_action(self, room: dict, entity_ids: Iterable[str] | None = None) -> tuple[str | None, float]:
         """Observe actual hvac_action from climate devices for model training.
 
         When climate control is disabled, devices may still self-regulate.
@@ -1691,10 +1709,12 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         Returns (observed_mode, power_fraction):
           - ("heating", 1.0) / ("cooling", 1.0) / ("idle", 0.0) when conclusive
           - (None, 0.0) when state is unobservable (caller should skip training)
+
+        ``entity_ids`` limits the observation to these devices (default: all of the room).
         """
         dominated: str | None = None
 
-        for eid in get_all_entity_ids(room.get("devices", [])):
+        for eid in entity_ids if entity_ids is not None else get_all_entity_ids(room.get("devices", [])):
             state = self.hass.states.get(eid)
             if state is None or state.state in ("unavailable", "unknown"):
                 continue
@@ -1782,7 +1802,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 return True
         return False
 
-    def _infer_device_mode(self, room: dict) -> str:
+    def _infer_device_mode(self, room: dict, entity_ids: Iterable[str] | None = None) -> str:
         """Infer heating/cooling from hvac_mode when hvac_action is unavailable.
 
         Compares current_temperature to the device setpoint to avoid showing
@@ -1795,7 +1815,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         ``target_temp_high``.  A range mode without explicit low/high
         setpoints is ambiguous, so it stays idle (conservative, see #332).
         """
-        for eid in get_all_entity_ids(room.get("devices", [])):
+        for eid in entity_ids if entity_ids is not None else get_all_entity_ids(room.get("devices", [])):
             state = self.hass.states.get(eid)
             if state is None or state.state in ("unavailable", "unknown", "off"):
                 continue

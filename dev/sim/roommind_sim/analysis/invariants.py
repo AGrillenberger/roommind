@@ -10,9 +10,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from .load import Interval, RunData
-from .metrics import ACTIVE_MODES
+from .metrics import ACTIVE_MODES, decided_mode
 
 EXEMPT_MARGIN_S = 90.0
+COORDINATOR_CYCLE_S = 35.0
 
 
 @dataclass
@@ -126,7 +127,7 @@ def _active_targets_before(run: RunData, area: str, t: float) -> dict[str, Any] 
         if o["t"] > t:
             continue
         room = o["rooms"].get(area) or {}
-        if room.get("mode") in ("heating", "cooling"):
+        if decided_mode(room) in ("heating", "cooling"):
             return room
     return None
 
@@ -173,7 +174,7 @@ def min_run_hold_keeps_setpoint(run: RunData, tolerance_k: float = 0.05) -> list
         # The observer polls after the coordinator tick that sent the command.
         obs = run.observer_at(c["t"] + 35) or {}
         room = obs.get("rooms", {}).get(area) or {}
-        if not room.get("compressor_protection_active") or room.get("mode") != "idle":
+        if not room.get("compressor_protection_active") or decided_mode(room) != "idle":
             continue
         heating = mode.get(eid) == "heat"
         cooling = mode.get(eid) == "cool"
@@ -258,7 +259,7 @@ def no_cooling_below_outdoor_min(run: RunData, tolerance_k: float = 0.3) -> list
             continue
         t_out = s["outdoor"]["temp"]
         for area, room in o["rooms"].items():
-            if room.get("mode") == "cooling" and t_out < limit and not room.get("override_active"):
+            if decided_mode(room) == "cooling" and t_out < limit and not room.get("override_active"):
                 out.append(Violation(o["t"], f"{area} cooling at outdoor {t_out:.1f} < {limit}"))
                 break
     return out[:20]
@@ -390,12 +391,48 @@ def max_commands_per_hour(run: RunData, limit: float = 12.0, entity_id: str | No
     return out
 
 
+def hold_shows_running_unit(run: RunData) -> list[Violation]:
+    """During a min-run hold the room shows what the held unit does, plus the time left (#452).
+
+    Only ticks where the room's group members report the same running action in the
+    sample at the observer tick and the one before it count (state lag around a stop).
+    The observer reads the live state of the last coordinator cycle, so ``until`` may
+    lie up to one cycle before the tick.
+    """
+    shown = {"heating": "heating", "preheating": "heating", "cooling": "cooling"}
+    members_of: dict[str, list[str]] = {}
+    for group in _groups(run):
+        for m in group.get("members", []):
+            area = _room_of(run, m)
+            if area is not None:
+                members_of.setdefault(area, []).append(m)
+    out: list[Violation] = []
+    for o in run.observer:
+        for area, room in o["rooms"].items():
+            if room.get("compressor_protection_reason") != "min_run" or decided_mode(room) != "idle":
+                continue
+            until = room.get("compressor_protection_until")
+            if until is None or until <= o["t"] - COORDINATOR_CYCLE_S:
+                out.append(Violation(o["t"], f"{area}: min-run hold without time left ({until})"))
+                continue
+            actions = set()
+            for s in (run.sample_at(o["t"]), run.sample_at(o["t"] - COORDINATOR_CYCLE_S)):
+                for m in members_of.get(area, []):
+                    dev = (s or {}).get("devices", {}).get(m) or {}
+                    if dev.get("mode") not in (None, "off"):
+                        actions.add(shown.get(dev.get("action"), "idle"))
+            if len(actions) == 1 and (expected := actions.pop()) != room.get("mode"):
+                out.append(Violation(o["t"], f"{area}: held unit {expected}, room shows {room.get('mode')}"))
+    return out[:20]
+
+
 INVARIANTS: dict[str, Callable[..., list[Violation]]] = {
     f.__name__: f
     for f in (
         min_run_respected,
         min_run_commanded,
         min_run_hold_keeps_setpoint,
+        hold_shows_running_unit,
         min_off_respected,
         target_never_empty,
         no_cooling_below_outdoor_min,

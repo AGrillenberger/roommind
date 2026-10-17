@@ -955,6 +955,7 @@ async def test_list_rooms_includes_compressor_protection_status(ws_hass, store, 
             "mode": "idle",
             "compressor_protection_active": True,
             "compressor_protection_reason": "min_off",
+            "compressor_protection_until": 1_700_000_300.0,
         }
     }
     mock_coordinator.async_request_refresh = AsyncMock()
@@ -968,6 +969,7 @@ async def test_list_rooms_includes_compressor_protection_status(ws_hass, store, 
     live = call_args[0][1]["rooms"]["kinderzimmer"]["live"]
     assert live["compressor_protection_active"] is True
     assert live["compressor_protection_reason"] == "min_off"
+    assert live["compressor_protection_until"] == 1_700_000_300.0
 
 
 @pytest.mark.asyncio

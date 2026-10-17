@@ -13,9 +13,10 @@ description: >
   overheat a room that is already at its target, so this is not fixed in the hold.
   Once the room is 0.5 K past its target the hold throttles the unit to the value its
   own sensor reads, so a saturated boost no longer carries the room degrees past it.
-refs: [436]
+refs: [436, 452]
 tags: [compressor, ac]
 expect:
+  - {invariant: hold_shows_running_unit, label: dashboard shows the held unit heating plus the min-run time left (#452)}
   - {invariant: min_run_hold_keeps_setpoint}
   - {invariant: min_run_commanded}
   - {metric: comfort.hold_heat_over_max_k, room: wohnzimmer, max: 2.0, label: held unit throttled to its own reading past target + 0.5 K (2.6 to 3.6 K before)}

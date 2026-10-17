@@ -5,6 +5,7 @@ from __future__ import annotations
 from helpers import scenario
 
 from roommind_sim.analysis.invariants import (
+    hold_shows_running_unit,
     max_commands_per_hour,
     min_run_commanded,
     min_run_hold_keeps_setpoint,
@@ -203,6 +204,37 @@ def test_hold_throttle_is_not_allowed_in_a_room_with_both_sides():
     assert len(min_run_hold_keeps_setpoint(run)) == 1
     run = _hold_run([23.0], cool_target=None, climate_mode="auto", current_temp=21.6)
     assert min_run_hold_keeps_setpoint(run) == []
+
+
+def test_hold_is_found_by_the_decision_while_the_room_shows_the_running_unit_452():
+    run = _hold_run([21.0])
+    for o in run.observer[1:]:
+        o["rooms"]["r"].update(mode="heating", commanded_mode="idle")
+    assert len(min_run_hold_keeps_setpoint(run)) == 1
+
+
+def _shown_hold_run(shown: str, action: str = "heating", left_s: float | None = 600.0) -> RunData:
+    run = _run([True] * 10)
+    for smp in run.samples:
+        smp["devices"][AC].update(mode="heat", action=action)
+    t = run.start + 300
+    room = {
+        "mode": shown,
+        "commanded_mode": "idle",
+        "compressor_protection_reason": "min_run",
+        "compressor_protection_until": t + left_s if left_s is not None else None,
+    }
+    run.observer = [{"t": t, "rooms": {"r": room}}]
+    return run
+
+
+def test_hold_shows_the_running_unit_and_the_time_left_452():
+    assert hold_shows_running_unit(_shown_hold_run("heating")) == []
+    assert hold_shows_running_unit(_shown_hold_run("idle", action="idle")) == []
+    found = hold_shows_running_unit(_shown_hold_run("idle"))
+    assert len(found) == 1 and "held unit heating, room shows idle" in found[0].detail
+    found = hold_shows_running_unit(_shown_hold_run("heating", left_s=None))
+    assert len(found) == 1 and "without time left" in found[0].detail
 
 
 def test_setpoint_drop_outside_the_hold_is_fine():

@@ -56,6 +56,7 @@ export interface RoomLiveData {
   learning_paused_reason: "outdoor_unavailable" | null;
   compressor_protection_active: boolean;
   compressor_protection_reason: "min_off" | "min_run" | null;
+  compressor_protection_until: number | null;
   coil_dry_active: boolean;
   coil_dry_phase: "drain" | "blow" | null;
   coil_dry_until: number | null;
