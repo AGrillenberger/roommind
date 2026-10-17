@@ -21,6 +21,7 @@ from homeassistant.components.climate import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -523,7 +524,9 @@ class RoomMindRoomClimate(CoordinatorEntity, ClimateEntity):
         hvac_mode = kwargs.pop(ATTR_HVAC_MODE, None)
         if hvac_mode is not None:
             # HA passes it through unchecked here, unlike the set_hvac_mode service
-            await self.async_handle_set_hvac_mode_service(hvac_mode)
+            if hvac_mode not in self.hvac_modes:
+                raise ServiceValidationError(f"{self.entity_id} does not support hvac_mode {hvac_mode}")
+            await self.async_set_hvac_mode(hvac_mode)
         if self._already_in_force(kwargs):
             return
         room = self._room()
