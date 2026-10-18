@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import time
@@ -53,6 +54,10 @@ class SimRuntime:
         # Persist/flush jobs run in the executor; serialize them so files are not
         # written concurrently and timeline lines stay in order.
         self._io_lock = asyncio.Lock()
+        # Timeline lines go through a writer thread of our own: HA cancels its tracked
+        # executor jobs on shutdown, and a cancelled flush lost (or, retried, doubled) the
+        # last minutes of the timeline on loaded hosts.
+        self._writer = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="simhome_writer")
         self.removed: set[str] = set(state.get("removed", []))
 
     # --- loading ------------------------------------------------------------------------
@@ -233,7 +238,8 @@ class SimRuntime:
             buffers = {k: v for k, v in self._buffers.items() if v}
             self._buffers = {k: [] for k in self._buffers}
             if buffers:
-                await self.hass.async_add_executor_job(_append_lines, self.dir / "timeline", buffers)
+                write = self.hass.loop.run_in_executor(self._writer, _append_lines, self.dir / "timeline", buffers)
+                await asyncio.shield(write)
 
     async def async_persist(self) -> None:
         world = self.world.snapshot()
@@ -258,6 +264,8 @@ class SimRuntime:
             unsub()
         self._unsubs.clear()
         await self.async_persist()
+        # all writes are done; an idle writer thread would hold HA's shutdown for its 10 s join timeout
+        self._writer.shutdown(wait=False)
 
     # --- provisioning -----------------------------------------------------------------------
 
