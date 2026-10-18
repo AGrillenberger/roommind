@@ -58,6 +58,7 @@ class SimRuntime:
         # executor jobs on shutdown, and a cancelled flush lost (or, retried, doubled) the
         # last minutes of the timeline on loaded hosts.
         self._writer = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="simhome_writer")
+        self._writer_closed = False
         self.removed: set[str] = set(state.get("removed", []))
 
     # --- loading ------------------------------------------------------------------------
@@ -235,6 +236,8 @@ class SimRuntime:
 
     async def async_flush(self) -> None:
         async with self._io_lock:
+            if self._writer_closed:
+                return  # a flush queued before the stop; the stop's own flush already wrote its lines
             buffers = {k: v for k, v in self._buffers.items() if v}
             self._buffers = {k: [] for k in self._buffers}
             if buffers:
@@ -265,6 +268,7 @@ class SimRuntime:
         self._unsubs.clear()
         await self.async_persist()
         # all writes are done; an idle writer thread would hold HA's shutdown for its 10 s join timeout
+        self._writer_closed = True
         self._writer.shutdown(wait=False)
 
     # --- provisioning -----------------------------------------------------------------------
