@@ -99,6 +99,26 @@ setpoint once the room is at its cool target), `no_rejected_commands`, `window_o
 Check expressions see `room.<area>.<live field>`, `dev('<entity_id>')`,
 `cover('<entity_id>')`, `true_temp('<area>')` and `outdoor`.
 
+## Realism defaults
+
+Defaults follow typical installations; scenarios switch them off where a test needs a
+clean signal (with a comment why).
+
+| Default | Where | Switch |
+|---|---|---|
+| Weather-compensated supply: straight heating curve from `supply_foot_c` (25 °C, underfloor 24) at +20 °C to `supply_temp_c` at `design_outdoor_c` | `generic_trv`, `generic_boiler`, `ufh_zone` params | `heating_curve: false` = fixed `supply_temp_c` |
+| Radiator output ∝ excess temperature^1.3 (EN 442), rated output unchanged at the design point | `generic_trv` | `radiator_exponent` |
+| Forecasts drift from the weather with lead time (temperature ~1.4 K RMS on day 1, ~1.8 K on day 2; cloud cover ±15-20 %), the next hour is almost exact | `weather:` spec | `forecast_error: false` (perfect), or a dict with `temp_c`, `temp_c_per_day`, `cloud_pct`, `cloud_pct_per_day`, `ramp_h` |
+| Air-source units frost up while heating in humid air between -20 and +6 °C and defrost for `defrost_s` (300 s, no heat) after at least `defrost_interval_s` (2700 s); `hvac_action` meanwhile is `defrost_action` (`heating`) | `generic_split_ac`, `ecobee` | `defrost_interval_s: 0` |
+| ECO/quiet modes cap a split AC's output | `generic_split_ac` | `max_output` (1.0 = off) |
+| Zigbee sensor reporting in 0.2 K steps | profile `sonoff_snzb02d` (opt-in) | |
+
+The heating curve was checked against a real radiator room in October (rate 20-30 min into a
+run 0.75-0.8 K/h, real 0.78-0.92; before: 1.8-2.0). Forecast error sizes, defrost timing and
+`defrost_action` are assumptions, not fitted. Runs before these defaults (2f43c4c heating,
+829f34e forecasts, ea185c0 AC heating) are no valid "before" for runs after them; re-run with
+`--roommind-src`.
+
 ## Extending
 
 - **New device**: a YAML file in `profiles/devices/` (`extends:` an existing one,
