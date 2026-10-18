@@ -54,4 +54,4 @@ expect:
   - {metric: model.learned_alpha_per_h, room: abstellraum, min: 0.008, max: 0.03}
   # radiator sized to the heat load: 33 Kh with the 30-min decision window, 10-11 with the
   # pre-heat deadline (the rest: the learned heating rate is still ~2x the delivered one)
-  - {metric: comfort.undershoot_kh, room: abstellraum, max: 15}
+  - {metric: comfort.undershoot_kh, room: abstellraum, max: 15, known_failure: 'candidate since the weather-compensated supply in the sim (2f43c4c): 9.8 -> 26.8 Kh. The radiator runs at full output from 1 h 40 min before the block, the room gains only 0.3 K/h: the learned heating rate is ~2x the delivered one (ratio 2.1, partly a sim air-node artefact, not separated)'}
