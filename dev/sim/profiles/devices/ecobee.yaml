@@ -16,5 +16,8 @@ params:
   eer: 3.2
   shr: 0.7
   serves_rooms: []             # extra rooms reached by the ducts, with equal split
+  defrost_interval_s: 2700     # air-source outdoor coil; 0 for a furnace
+  defrost_s: 300
+  defrost_action: heating
 quirks:
   - {type: rounding, whole_degrees: true}

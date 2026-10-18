@@ -21,6 +21,45 @@ def _gains(heat_w: float, radiant_fraction: float) -> Gains:
     return Gains(conv_w=heat_w * (1 - radiant_fraction), rad_w=heat_w * radiant_fraction)
 
 
+def frost_rate(p: dict[str, Any], t_out: float, rh: float) -> float:
+    """Share of a full frost load the outdoor coil gathers per second of heating.
+
+    Frost needs a coil below 0 °C in humid air: none above ~6 °C outdoor, most around
+    -5..+3 °C, less in dry deep cold. ``defrost_interval_s`` is the shortest cycle (worst
+    conditions); 30-90 min between defrosts is the usual range. Assumed shape, not fitted."""
+    interval = float(p.get("defrost_interval_s", 2700))
+    if interval <= 0:
+        return 0.0
+    if t_out >= 6.0 or t_out <= -20.0:
+        f_t = 0.0
+    elif t_out > 3.0:
+        f_t = (6.0 - t_out) / 3.0
+    elif t_out >= -5.0:
+        f_t = 1.0
+    else:
+        f_t = (t_out + 20.0) / 15.0
+    return f_t * clamp((rh - 60.0) / 30.0, 0.0, 1.0) / interval
+
+
+def advance_frost(dev: Any, dt: float, env: DeviceEnv, heating: bool) -> bool:
+    """Frost and defrost bookkeeping of an air-source unit; True while it defrosts.
+
+    A defrost reverses the cycle for ``defrost_s``: no heat reaches the room, the
+    compressor keeps running. Frost thaws off a stopped coil above +2 °C outdoor."""
+    p = dev.spec.params
+    if heating:
+        if env.now < dev.defrost_until:
+            return True
+        dev.frost += dt * frost_rate(p, env.outdoor.temp_c, env.outdoor.rh)
+        if dev.frost >= 1.0:
+            dev.frost = 0.0
+            dev.defrost_until = env.now + float(p.get("defrost_s", 300))
+            return True
+    elif env.outdoor.temp_c > 2.0:
+        dev.frost = max(0.0, dev.frost - dt / 1800.0)
+    return False
+
+
 def curve_supply_c(p: dict[str, Any], t_out: float, design_default: float) -> float:
     """Supply temperature of a weather-compensated heating curve (straight line from
     ``supply_foot_c`` at +20 °C outdoor to ``supply_temp_c`` at ``design_outdoor_c``).
@@ -166,9 +205,12 @@ class SplitAc(SimDevice):
     stop). ``min_off_s`` is the restart delay after a stop (anti-short-cycle timer).
 
     Real units ramp up with a time constant of 40-76 s (DOE/AHRI cycling tests). The
-    profile keeps ``capacity_tau_s`` at 0: the room's air node reacts 2-4x faster than
-    real rooms to an AC, and together with the lag that turns into short cycles and a
-    mislearned model that real data do not show."""
+    profile keeps ``capacity_tau_s`` at 0: with a 3.5 kW unit at full power the lag
+    turned into short cycles and a mislearned model. The earlier explanation (air node
+    2-4x faster than real rooms) rested on a throttled real unit (ECO mode) and is void.
+
+    ``max_output`` caps the delivered share (ECO/quiet modes run the inverter well below
+    its rating). In heat mode the outdoor coil frosts and defrosts (``frost_rate``)."""
 
     model = "ac"
 
@@ -182,6 +224,8 @@ class SplitAc(SimDevice):
         self.off_since = -1e12
         self.coil_water_kg = 0.0
         self.sensor_offset_k = 0.0
+        self.frost = 0.0  # outdoor coil, 1.0 = defrost due
+        self.defrost_until = -1e12
 
     def _update_sensor_offset(self, dt: float) -> None:
         p = self.spec.params
@@ -259,13 +303,19 @@ class SplitAc(SimDevice):
             else:
                 err = max(0.0, reading - self.target_c)
             lo = float(p.get("min_modulation", 0.3))
-            self.modulation = 0.4 if self.hvac_mode == "dry" else clamp(lo + float(p.get("kp", 0.6)) * err, lo, 1.0)
+            top = float(p.get("max_output", 1.0))
+            self.modulation = (
+                0.4 if self.hvac_mode == "dry" else clamp(lo + float(p.get("kp", 0.6)) * err, min(lo, top), top)
+            )
         else:
             self.modulation = 0.0
         if self.running_mode and self.output_mode not in (None, self.running_mode):
             self.output = 0.0  # reversing the cycle starts from scratch
+        defrosting = advance_frost(self, dt, env, self.running_mode == "heat")
         tau = float(p.get("capacity_tau_s", 0.0))
-        if tau <= 0:
+        if defrosting:
+            self.output = 0.0  # heating restarts from scratch after the defrost
+        elif tau <= 0:
             self.output = self.modulation
         else:
             self.output += (self.modulation - self.output) * (1 - math.exp(-dt / tau))
@@ -294,6 +344,8 @@ class SplitAc(SimDevice):
                     heat_w = -q * shr
                 else:
                     heat_w = -q
+        if defrosting:
+            electric = float(p.get("heat_capacity_w", 3500)) * 0.1
         if not self.running_mode:
             electric = 0.0  # what the coil still delivers after a stop costs no compressor power
             if self.coil_water_kg > 0:
@@ -306,7 +358,8 @@ class SplitAc(SimDevice):
         electric += 25.0 if fan_on else 2.0
         self.active = self.running_mode is not None
         self.hvac_action = {
-            "heat": "heating",
+            # most integrations keep showing "heating" through a defrost; some report it
+            "heat": str(p.get("defrost_action", "heating")) if defrosting else "heating",
             "cool": "drying" if self.hvac_mode == "dry" else "cooling",
         }.get(
             self.running_mode or "",
@@ -324,6 +377,8 @@ class SplitAc(SimDevice):
             "output_mode": self.output_mode,
             "coil_water_kg": self.coil_water_kg,
             "sensor_offset_k": self.sensor_offset_k,
+            "frost": self.frost,
+            "defrost_until": self.defrost_until,
         }
 
     def _restore_model_state(self, data: dict[str, Any]) -> None:
@@ -334,6 +389,8 @@ class SplitAc(SimDevice):
         self.output_mode = data.get("output_mode")
         self.coil_water_kg = data.get("coil_water_kg", 0.0)
         self.sensor_offset_k = data.get("sensor_offset_k", 0.0)
+        self.frost = data.get("frost", 0.0)
+        self.defrost_until = data.get("defrost_until", -1e12)
 
 
 @dataclass
@@ -346,6 +403,8 @@ class HeatPump(SimDevice):
         super().__post_init__()
         self.running_mode: str | None = None
         self.on_since = 0.0
+        self.frost = 0.0
+        self.defrost_until = -1e12
 
     def _physics(self, dt: float, env: DeviceEnv) -> dict[str, Gains]:
         p = self.spec.params
@@ -380,10 +439,15 @@ class HeatPump(SimDevice):
         heat_w = 0.0
         electric = 0.0
         moisture = 0.0
+        defrosting = advance_frost(self, dt, env, self.running_mode == "heat")
         if self.running_mode == "heat":
-            heat_w = float(p.get("heat_capacity_w", 8000))
+            heat_w = 0.0 if defrosting else float(p.get("heat_capacity_w", 8000))
             a, b = p.get("cop_heat", [2.8, 0.05])
-            electric = heat_w / max(1.5, a + b * env.outdoor.temp_c)
+            electric = (
+                (0.1 * float(p.get("heat_capacity_w", 8000)))
+                if defrosting
+                else heat_w / max(1.5, a + b * env.outdoor.temp_c)
+            )
         elif self.running_mode == "cool":
             q = float(p.get("cool_capacity_w", 7000))
             electric = q / float(p.get("eer", 3.2))
@@ -391,7 +455,8 @@ class HeatPump(SimDevice):
             heat_w = -q * shr
             moisture = -q * (1 - shr) / LATENT_HEAT
         self.active = self.running_mode is not None
-        self.hvac_action = {"heat": "heating", "cool": "cooling"}.get(
+        heating_action = str(p.get("defrost_action", "heating")) if defrosting else "heating"
+        self.hvac_action = {"heat": heating_action, "cool": "cooling"}.get(
             self.running_mode or "", "off" if mode == "off" else "idle"
         )
         self._account(dt, heat_w, electric + (40 if self.active else 3))
@@ -399,11 +464,18 @@ class HeatPump(SimDevice):
         return {r: Gains(conv_w=heat_w * share, moisture_kg_s=moisture * share) for r in rooms}
 
     def _model_state(self) -> dict[str, Any]:
-        return {"running_mode": self.running_mode, "on_since": self.on_since}
+        return {
+            "running_mode": self.running_mode,
+            "on_since": self.on_since,
+            "frost": self.frost,
+            "defrost_until": self.defrost_until,
+        }
 
     def _restore_model_state(self, data: dict[str, Any]) -> None:
         self.running_mode = data.get("running_mode")
         self.on_since = data.get("on_since", 0.0)
+        self.frost = data.get("frost", 0.0)
+        self.defrost_until = data.get("defrost_until", -1e12)
 
 
 @dataclass

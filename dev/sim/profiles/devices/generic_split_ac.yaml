@@ -26,4 +26,8 @@ params:
   eer: 3.5
   shr: 0.75                    # sensible heat ratio while cooling (rest dehumidifies)
   radiant_fraction: 0.0
+  max_output: 1.0              # cap on the delivered share; ECO/quiet modes run far below the rating (~0.3-0.5)
+  defrost_interval_s: 2700     # shortest heating time between defrosts (humid air around 0 °C); 0 = never
+  defrost_s: 300               # reverse-cycle defrost, no heat to the room
+  defrost_action: heating      # what hvac_action shows meanwhile; most integrations do not report "defrosting"
 quirks: []

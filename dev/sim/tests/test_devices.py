@@ -251,3 +251,37 @@ def test_radiator_keeps_its_design_output_and_follows_the_curve_in_mild_weather(
     # 33 °C supply instead of 55 °C: a third of the output, not two thirds as with a linear radiator
     assert mild < 0.4 * cold
     assert fixed > 0.85 * cold
+
+
+def _split_heating(outdoor: float, humidity: float, **dev):  # noqa: ANN003
+    w = world(
+        {
+            "r": {
+                "initial": {"temperature": 15.0},
+                "devices": [{"entity_id": "climate.d", "profile": "generic_split_ac", **dev}],
+            }
+        },
+        weather={"profile": "temperate", "fixed": {"temperature": outdoor, "cloud": 100.0, "humidity": humidity}},
+    )
+    d = w.devices["climate.d"]
+    d.call("set_temperature", {"temperature": 30, "hvac_mode": "heat"}, w.now)
+    cold = []
+    run(w, 3 * 3600, every=lambda w_, t: cold.append(d.active and d.heat_output_w() < 1))
+    return d, sum(cold) * 10
+
+
+def test_split_ac_defrosts_in_humid_cold_but_not_in_mild_or_dry_air():
+    d, cold_s = _split_heating(1.0, 90.0)
+    # 45 min of heating per 5 min defrost: three to four defrosts in three hours
+    assert 900 <= cold_s <= 1300
+    assert d.hvac_action == "heating" or d.hvac_action == "idle"
+    assert _split_heating(10.0, 90.0)[1] == 0
+    assert _split_heating(1.0, 50.0)[1] == 0
+    assert _split_heating(1.0, 90.0, defrost_interval_s=0)[1] == 0
+
+
+def test_split_ac_max_output_caps_the_eco_mode():
+    w, d = _one("generic_split_ac", 28.0, max_output=0.35)
+    d.call("set_temperature", {"temperature": 16, "hvac_mode": "cool"}, w.now)
+    run(w, 600)
+    assert d.modulation == pytest.approx(0.35)
