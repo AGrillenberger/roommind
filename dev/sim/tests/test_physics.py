@@ -24,7 +24,14 @@ def test_unheated_room_relaxes_towards_outdoor():
 
 def test_radiator_responds_in_minutes():
     w = world(
-        {"r": {"initial": {"temperature": 18.0}, "devices": [{"entity_id": "climate.r_trv", "profile": "generic_trv"}]}}
+        {
+            "r": {
+                "initial": {"temperature": 18.0},
+                "devices": [{"entity_id": "climate.r_trv", "profile": "generic_trv"}],
+            }
+        },
+        # design day: the heating curve supplies its full 55 °C
+        weather={"profile": "temperate", "fixed": {"temperature": -12.0, "cloud": 100.0, "humidity": 80.0}},
     )
     dev = w.devices["climate.r_trv"]
     assert dev.call("set_temperature", {"temperature": 22, "hvac_mode": "heat"}, w.now).ok
@@ -36,7 +43,7 @@ def test_radiator_responds_in_minutes():
     run(w, 1200)
     assert dev.heat_output_w() > 0.7 * rated_w
     run(w, 2 * 3600)
-    assert w.zones["r"].t_air > 19.0
+    assert w.zones["r"].t_air > 18.5  # 1.3x the design load: only 30 % of it is left to warm the mass
 
 
 def test_trv_head_bias_closes_valve_before_room_reaches_setpoint():

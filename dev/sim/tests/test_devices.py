@@ -208,3 +208,46 @@ def test_split_ac_waits_for_its_restart_delay():
     run(w, 120)
     assert d.running_mode == "cool"
     assert d.counters.starts == 2
+
+
+def test_heating_curve_supply():
+    from roommind_sim.devices.models import curve_supply_c
+
+    assert curve_supply_c({}, -12.0, 55.0) == pytest.approx(55.0)
+    assert curve_supply_c({}, 4.0, 55.0) == pytest.approx(40.0)
+    assert curve_supply_c({}, 25.0, 55.0) == pytest.approx(25.0)
+    assert curve_supply_c({"heating_curve": False}, 10.0, 55.0) == pytest.approx(55.0)
+    assert curve_supply_c({"supply_temp_c": 35, "supply_foot_c": 24}, -12.0, 35.0) == pytest.approx(35.0)
+
+
+def _radiator_output(outdoor: float, **dev):  # noqa: ANN003
+    w = world(
+        {
+            "r": {
+                "initial": {"temperature": 20.0},
+                "devices": [{"entity_id": "climate.d", "profile": "generic_trv", **dev}],
+            }
+        },
+        weather={"profile": "temperate", "fixed": {"temperature": outdoor, "cloud": 100.0, "humidity": 80.0}},
+    )
+    d = w.devices["climate.d"]
+    d.call("set_temperature", {"temperature": 30, "hvac_mode": "heat"}, w.now)
+    run(w, 3600)
+    return d.heat_output_w(), d._size(DeviceEnvStub(w.zones["r"])) * d._design_dt(), w.zones["r"].t_air
+
+
+class DeviceEnvStub:
+    def __init__(self, zone):  # noqa: ANN001
+        self.zone = zone
+
+
+def test_radiator_keeps_its_design_output_and_follows_the_curve_in_mild_weather():
+    cold, design_w, room = _radiator_output(-12.0)
+    # at the design point the warmed-up open radiator gives its rated output (the room warms a little)
+    assert 0.95 * design_w < cold <= design_w * 1.02
+    assert room > 20.0
+    mild, _, _ = _radiator_output(10.0)
+    fixed, _, _ = _radiator_output(10.0, heating_curve=False)
+    # 33 °C supply instead of 55 °C: a third of the output, not two thirds as with a linear radiator
+    assert mild < 0.4 * cold
+    assert fixed > 0.85 * cold

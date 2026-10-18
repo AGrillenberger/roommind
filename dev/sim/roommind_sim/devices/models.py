@@ -14,10 +14,24 @@ GROUND_TEMP_C = 12.0
 VALVE_TRAVEL_S = 120.0
 UFH_ACTUATOR_TRAVEL_S = 180.0
 COIL_TEMP_C = 10.0
+MAX_SUPPLY_C = 75.0
 
 
 def _gains(heat_w: float, radiant_fraction: float) -> Gains:
     return Gains(conv_w=heat_w * (1 - radiant_fraction), rad_w=heat_w * radiant_fraction)
+
+
+def curve_supply_c(p: dict[str, Any], t_out: float, design_default: float) -> float:
+    """Supply temperature of a weather-compensated heating curve (straight line from
+    ``supply_foot_c`` at +20 °C outdoor to ``supply_temp_c`` at ``design_outdoor_c``).
+    ``heating_curve: false`` keeps the supply fixed at ``supply_temp_c``."""
+    design = float(p.get("supply_temp_c", design_default))
+    if not p.get("heating_curve", True):
+        return design
+    foot = float(p.get("supply_foot_c", 25.0))
+    design_out = float(p.get("design_outdoor_c", -12.0))
+    share = (20.0 - t_out) / (20.0 - design_out)
+    return clamp(foot + (design - foot) * share, foot, MAX_SUPPLY_C)
 
 
 @dataclass
@@ -33,16 +47,21 @@ class Trv(SimDevice):
         self.valve = 0.0
         self._next_report = 0.0
 
+    def _design_dt(self) -> float:
+        """Mean radiator excess over a 20 °C room at the design supply (steady state, valve open)."""
+        p = self.spec.params
+        ratio = float(p.get("flow_per_h", 1.5))
+        supply = float(p.get("supply_temp_c", 55))
+        return (ratio * supply + 20.0) / (ratio + 1.0) - 20.0
+
     def _size(self, env: DeviceEnv) -> float:
-        """Radiator W/K: explicit, or sized to the room's heat load (output at 55/20 °C)."""
+        """Radiator W/K at the design point: explicit, or sized to the room's heat load."""
         p = self.spec.params
         if "h_radiator_w_k" in p:
             return float(p["h_radiator_w_k"])
         ua = env.zone.params.h_air_out + env.zone.params.h_mass_out
         design_w = float(p.get("design_factor", 1.3)) * ua * (20.0 - float(p.get("design_outdoor_c", -12)))
-        ratio = float(p.get("flow_per_h", 1.5))
-        t_rad = (ratio * 55.0 + 20.0) / (ratio + 1.0)
-        return design_w / (t_rad - 20.0)
+        return design_w / self._design_dt()
 
     def _physics(self, dt: float, env: DeviceEnv) -> dict[str, Gains]:
         p = self.spec.params
@@ -58,11 +77,15 @@ class Trv(SimDevice):
         if self.hvac_mode in ("heat", "auto", "heat_cool") and self.available:
             demand = clamp((self.target_c - reading) / float(p.get("p_band_k", 1.0)), 0.0, 1.0)
         self.valve = approach(self.valve, demand, 1.0 / VALVE_TRAVEL_S, dt)
-        supply = env.supply_temp_c if env.supply_temp_c is not None else float(p.get("supply_temp_c", 55))
+        supply = env.supply_temp_c if env.supply_temp_c is not None else curve_supply_c(p, env.outdoor.temp_c, 55.0)
         flow = float(p.get("flow_w_k", h_rad * float(p.get("flow_per_h", 1.5))))
         capacity_j_k = float(p.get("radiator_capacity_kj_k", h_rad * float(p.get("capacity_kj_per_h", 1.75)))) * 1000
         q_in = self.valve * flow * max(0.0, supply - self.t_rad)
-        q_out = h_rad * (self.t_rad - z.t_air)
+        # EN 442: output grows with the excess temperature to the power n (~1.3 for panels)
+        dt_design = self._design_dt()
+        excess = self.t_rad - z.t_air
+        n = float(p.get("radiator_exponent", 1.3))
+        q_out = h_rad * dt_design * math.copysign((abs(excess) / dt_design) ** n, excess)
         self.t_rad += dt * (q_in - q_out) / capacity_j_k
         self.active = self.valve > 0.05 and q_in > 1.0
         self.hvac_action = "off" if self.hvac_mode == "off" else ("heating" if self.active else "idle")
@@ -106,7 +129,7 @@ class Ufh(SimDevice):
         elif reading >= self.target_c + hyst:
             self.calling = False
         self.actuator = approach(self.actuator, 1.0 if self.calling else 0.0, 1.0 / UFH_ACTUATOR_TRAVEL_S, dt)
-        supply = env.supply_temp_c if env.supply_temp_c is not None else float(p.get("supply_temp_c", 35))
+        supply = env.supply_temp_c if env.supply_temp_c is not None else curve_supply_c(p, env.outdoor.temp_c, 35.0)
         q_in = self.actuator * float(p.get("flow_w_per_m2k", 8)) * area * max(0.0, supply - self.t_slab)
         q_up = float(p.get("h_slab_air_w_per_m2k", 10.8)) * area * (self.t_slab - z.t_air)
         q_down = float(p.get("h_slab_ground_w_per_m2k", 0.5)) * area * (self.t_slab - GROUND_TEMP_C)
@@ -455,7 +478,7 @@ class Boiler(SimDevice):
         if self.t_water is None:
             self.t_water = env.zone.t_air
         on = self.hvac_mode == "heat" and self.available
-        target = float(p.get("supply_temp_c", 60)) if on else env.zone.t_air
+        target = curve_supply_c(p, env.outdoor.temp_c, 60.0) if on else env.zone.t_air
         warmup = float(p.get("warmup_s", 120))
         self.t_water += (target - self.t_water) * min(1.0, dt / max(warmup, dt))
         self.sensor_c = round(self.t_water, 1)
