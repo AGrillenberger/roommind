@@ -215,3 +215,12 @@ def test_cover_moves_on_a_day_with_a_manual_move_are_left_out_of_the_unattended_
     m = _cover_metrics(run, "cover.r", "r")
     assert m["max_commands_per_day"] == 2
     assert m["max_commands_per_day_unattended"] == 1
+
+
+def test_heating_without_source_counts_heating_decisions_the_orchestration_left_unserved():
+    run = _run([20.0] * 4, [21.0] * 4)
+    for o, sources in zip(run.observer, [None, "none", "primary", "none"], strict=True):
+        o["rooms"]["r"]["active_heat_sources"] = sources
+    run.observer[3]["rooms"]["r"]["mode"] = "idle"
+    # t1 heating without source (1 h); t2 has a source, t3 is idle
+    assert _room_metrics(run, "r")["heating_without_source_h"] == pytest.approx(1.0)

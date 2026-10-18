@@ -78,6 +78,9 @@ def _room_metrics(run: RunData, area: str) -> dict[str, Any]:
     its heat target. The reference is the highest heat target from
     ``HOLD_REF_LOOKBACK_S`` before to ``PREHEAT_LOOKAHEAD_S`` after, so neither a hold
     that runs into a setback nor one during pre-heating is booked against the eco target.
+
+    ``heating_without_source_h``: RoomMind decided to heat, but heat source
+    orchestration picked no source, so nothing ran.
     """
     under = over = over_heat = coast_kh = above_band = in_band = covered = 0.0
     upcoming = _upcoming_heat(run, area)
@@ -88,6 +91,7 @@ def _room_metrics(run: RunData, area: str) -> dict[str, Any]:
     hold_max = hold_kh = 0.0
     idle_below_since: float | None = None
     idle_below_max_h = 0.0
+    unsourced_h = 0.0
     recent_heat: deque[tuple[float, float]] = deque()
     prev_t = None
     for s in run.samples:
@@ -101,6 +105,8 @@ def _room_metrics(run: RunData, area: str) -> dict[str, Any]:
         t_air = s["rooms"][area]["t_air"]
         if not room:
             continue
+        if decided_mode(room) == "heating" and room.get("active_heat_sources") == "none":
+            unsourced_h += dt_h
         heat = room.get("heat_target")
         cool = room.get("cool_target")
         if heat is not None:
@@ -167,6 +173,7 @@ def _room_metrics(run: RunData, area: str) -> dict[str, Any]:
         "hold_heat_over_max_k": round(hold_max, 2),
         "hold_heat_over_kh": round(hold_kh, 3),
         "idle_below_target_max_h": round(idle_below_max_h, 2),
+        "heating_without_source_h": round(unsourced_h, 2),
         "in_band_pct": round(100 * in_band / covered, 1) if covered else None,
         "temp_min": round(min(temps), 2) if temps else None,
         "temp_max": round(max(temps), 2) if temps else None,

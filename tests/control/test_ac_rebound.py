@@ -285,7 +285,7 @@ def test_controller_hands_charge_to_optimizer_and_closed_form():
     assert opt.call_args.kwargs["rebound_charge"] == 0.4
     optimizer = MPCOptimizer(model=ctrl._model_manager.get_model("living_room"), can_heat=False, can_cool=True)
     with patch.object(MPCOptimizer, "compute_optimal_power", return_value=(0.5, MODE_COOLING)) as cop:
-        ctrl._gentle_power(optimizer, MODE_COOLING, 25.0, 30.0, 24.0)
+        ctrl._gentle_power(optimizer, 25.0, 30.0, MODE_COOLING, 24.0)
     assert cop.call_args.kwargs["rebound_charge"] == 0.4
 
 

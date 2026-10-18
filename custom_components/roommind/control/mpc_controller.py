@@ -6,6 +6,7 @@ import logging
 import math
 import time
 from collections.abc import Callable
+from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
 from homeassistant.const import UnitOfTemperature
@@ -1484,96 +1485,111 @@ class MPCController:
             cool_target_series = [fallback_c] * horizon_blocks
 
         run_system = self._resolve_run_system(current_temp, targets.heat)
-        min_run = get_min_run_blocks(run_system, PLAN_DT_MINUTES)
+        # A pre-heat towards a stricter upcoming target can run on other sources than the
+        # target in force suggests (orchestration: AC alone instead of the floor). Plan once
+        # more with the rules of those sources, else the AC was started on the floor's
+        # schedule and stopped by its own rules the next cycle.
+        for _pass in range(2):
+            min_run = get_min_run_blocks(run_system, PLAN_DT_MINUTES)
 
-        cooling_min, heating_max = outdoor_gate_limits(
-            self.outdoor_temp is not None or bool(self.outdoor_forecast),
-            self.outdoor_cooling_min,
-            self.outdoor_heating_max,
-        )
+            cooling_min, heating_max = outdoor_gate_limits(
+                self.outdoor_temp is not None or bool(self.outdoor_forecast),
+                self.outdoor_cooling_min,
+                self.outdoor_heating_max,
+            )
 
-        optimizer = MPCOptimizer(
-            model=model,
-            can_heat=can_heat,
-            can_cool=can_cool,
-            w_comfort=self._w_comfort,
-            w_energy=self._w_energy,
-            outdoor_cooling_min=cooling_min,
-            outdoor_heating_max=heating_max,
-            min_run_blocks=min_run,
-            cool_min_run_blocks=get_min_run_blocks("", PLAN_DT_MINUTES),
-            override_active=is_override_active(self.room_config),
-            heating_system_type=run_system,
-            approach_rate=self._approach_rate,
-            start_penalty=slow_start_penalty(min_run, PLAN_DT_MINUTES),
-            fast_heater_shares_model=check_acs_can_heat(self.hass, self.room_config),
-            preheat_max_blocks=self._preheat_max_blocks,
-        )
+            optimizer = MPCOptimizer(
+                model=model,
+                can_heat=can_heat,
+                can_cool=can_cool,
+                w_comfort=self._w_comfort,
+                w_energy=self._w_energy,
+                outdoor_cooling_min=cooling_min,
+                outdoor_heating_max=heating_max,
+                min_run_blocks=min_run,
+                cool_min_run_blocks=get_min_run_blocks("", PLAN_DT_MINUTES),
+                override_active=is_override_active(self.room_config),
+                heating_system_type=run_system,
+                approach_rate=self._approach_rate,
+                start_penalty=slow_start_penalty(min_run, PLAN_DT_MINUTES),
+                fast_heater_shares_model=check_acs_can_heat(self.hass, self.room_config),
+                preheat_max_blocks=self._preheat_max_blocks,
+            )
 
-        plan = optimizer.optimize(
-            T_room=current_temp,
-            T_outdoor_series=outdoor_series,
-            heat_target_series=heat_target_series,
-            cool_target_series=cool_target_series,
-            dt_minutes=PLAN_DT_MINUTES,
-            solar_series=solar_series,
-            residual_series=residual_series,
-            occupancy_series=occupancy_series,
-            initial_mode=self.previous_mode,
-            rebound_charge=self.q_rebound,
-        )
-        self.last_plan = plan
-        # Shading can attenuate solar gain, never the body heat of whoever just
-        # walked in, so the cover logic reads a peak computed without it (#418).
-        # Replaying the plan keeps the control decision itself untouched.
-        _unoccupied = (
-            optimizer.simulate_plan(
-                plan,
-                current_temp,
-                outdoor_series,
-                PLAN_DT_MINUTES,
+            plan = optimizer.optimize(
+                T_room=current_temp,
+                T_outdoor_series=outdoor_series,
+                heat_target_series=heat_target_series,
+                cool_target_series=cool_target_series,
+                dt_minutes=PLAN_DT_MINUTES,
                 solar_series=solar_series,
                 residual_series=residual_series,
-                occupancy_series=None,
+                occupancy_series=occupancy_series,
+                initial_mode=self.previous_mode,
                 rebound_charge=self.q_rebound,
             )
-            if self.q_occupancy > 0
-            else None
-        )
-        self._peak_temps_unoccupied = _unoccupied if _unoccupied and len(_unoccupied) > 1 else None
+            self.last_plan = plan
+            # Shading can attenuate solar gain, never the body heat of whoever just
+            # walked in, so the cover logic reads a peak computed without it (#418).
+            # Replaying the plan keeps the control decision itself untouched.
+            _unoccupied = (
+                optimizer.simulate_plan(
+                    plan,
+                    current_temp,
+                    outdoor_series,
+                    PLAN_DT_MINUTES,
+                    solar_series=solar_series,
+                    residual_series=residual_series,
+                    occupancy_series=None,
+                    rebound_charge=self.q_rebound,
+                )
+                if self.q_occupancy > 0
+                else None
+            )
+            self._peak_temps_unoccupied = _unoccupied if _unoccupied and len(_unoccupied) > 1 else None
 
-        # The guard horizon scales with heating system response time and
-        # matches the optimizer's per-system lookahead (read from the plan) so
-        # mild-weather UFH pre-heat decisions don't get suppressed by a short
-        # drift check.
-        guard_blocks = max(SAFETY_GUARD_MIN_BLOCKS, min_run, plan.lookahead_blocks, plan.preheat_blocks + 1)
-        lead_heat = [h for h in raw_heat[:guard_blocks] if h is not None]
-        lead_cool = [c for c in raw_cool[:guard_blocks] if c is not None]
-        self._lead_heat = max(lead_heat) if lead_heat else None
-        self._lead_cool = min(lead_cool) if lead_cool else None
-        outdoor_now = outdoor_series[0]
-        action = decide_mpc_action(
-            plan.get_current_action(),
-            plan.get_current_power_fraction(),
-            current_temp,
-            heat_target_series,
-            cool_target_series,
-            guard_blocks=guard_blocks,
-            slow_heat=is_slow_heat(min_run),
-            previous_mode=self.previous_mode,
-            heat_in_min_run=self._within_min_run(MODE_HEATING),
-            cool_in_min_run=self._within_min_run(MODE_COOLING),
-            can_heat=can_heat,
-            can_cool=can_cool,
-            heat_hysteresis=heat_start_hysteresis(
-                check_acs_can_heat(self.hass, self.room_config), bool(self.thermostats)
-            ),
-            idle_drift=lambda minutes: self._predict_idle_drift(current_temp, minutes),
-            continuation_power=lambda mode, target: self._gentle_power(
-                optimizer, mode, current_temp, outdoor_now, target
-            ),
-            area_id=self._area_id,
-        )
+            # The guard horizon scales with heating system response time and
+            # matches the optimizer's per-system lookahead (read from the plan) so
+            # mild-weather UFH pre-heat decisions don't get suppressed by a short
+            # drift check.
+            guard_blocks = max(SAFETY_GUARD_MIN_BLOCKS, min_run, plan.lookahead_blocks, plan.preheat_blocks + 1)
+            lead_heat = [h for h in raw_heat[:guard_blocks] if h is not None]
+            lead_cool = [c for c in raw_cool[:guard_blocks] if c is not None]
+            self._lead_heat = max(lead_heat) if lead_heat else None
+            self._lead_cool = min(lead_cool) if lead_cool else None
+            outdoor_now = outdoor_series[0]
+            action = decide_mpc_action(
+                plan.get_current_action(),
+                plan.get_current_power_fraction(),
+                current_temp,
+                heat_target_series,
+                cool_target_series,
+                guard_blocks=guard_blocks,
+                slow_heat=is_slow_heat(min_run),
+                previous_mode=self.previous_mode,
+                heat_in_min_run=self._within_min_run(MODE_HEATING),
+                cool_in_min_run=self._within_min_run(MODE_COOLING),
+                can_heat=can_heat,
+                can_cool=can_cool,
+                heat_hysteresis=heat_start_hysteresis(
+                    check_acs_can_heat(self.hass, self.room_config), bool(self.thermostats)
+                ),
+                idle_drift=lambda minutes: self._predict_idle_drift(current_temp, minutes),
+                continuation_power=partial(self._gentle_power, optimizer, current_temp, outdoor_now),
+                area_id=self._area_id,
+            )
+            if (
+                _pass
+                or action[0] != MODE_HEATING
+                or targets.heat is None
+                or self._lead_heat is None
+                or self._lead_heat <= targets.heat
+            ):
+                break
+            lead_system = self._resolve_run_system(current_temp, self._lead_heat)
+            if lead_system == run_system:
+                break
+            run_system = lead_system
         if action[0] == MODE_IDLE and self._setback_hold_over() and len(plan.actions) >= SETBACK_RELEASE_BLOCKS:
             ahead = plan.actions[:SETBACK_RELEASE_BLOCKS]
             self._setback_release = frozenset(
@@ -1582,7 +1598,7 @@ class MPCController:
         return action
 
     def _gentle_power(
-        self, optimizer: MPCOptimizer, mode: str, current_temp: float, outdoor_temp: float, target: float
+        self, optimizer: MPCOptimizer, current_temp: float, outdoor_temp: float, mode: str, target: float
     ) -> float:
         """Closed-form power for *mode*, at least MIN_POWER_FRACTION."""
         return gentle_power(
@@ -2465,8 +2481,10 @@ class MPCController:
 
         A direct device regulates on the value it gets, so while MPC heats ahead of a
         stricter upcoming target it needs that target, not the current one; otherwise
-        pre-heating only starts when the block begins. Pre-cooling mirrored. Outside
-        MPC (bang-bang, managed mode) there is no lead and the target is returned as is.
+        pre-heating only starts when the block begins. Heat source orchestration picks its
+        sources against the same target, else a pre-heat above the eco target parked them
+        all. Pre-cooling mirrored. Outside MPC (bang-bang, managed mode) there is no lead
+        and the target is returned as is.
         """
         if mode == MODE_HEATING and self._lead_heat is not None:
             return max(target, self._lead_heat)

@@ -938,7 +938,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 mode=mode,
                 power_fraction=power_fraction,
                 current_temp=current_temp,
-                target_temp=targets.heat,
+                target_temp=controller.direct_target(mode, targets.heat) if targets.heat is not None else None,
                 outdoor_temp=self.outdoor_temp_effective,
                 previous_active_sources=self._heat_source_states.get(area_id, "none"),
                 hass=self.hass,

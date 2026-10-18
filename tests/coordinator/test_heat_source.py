@@ -555,3 +555,55 @@ def test_training_power_counts_only_heating_devices():
     assert _orchestrated_training_power(ac_only) == 0.6
     assert _orchestrated_training_power(both) == pytest.approx(0.6)
     assert _orchestrated_training_power(none) == 0.0
+
+
+def _evaluate_heating_with_lead(lead_heat):
+    """Stand-in for MPCController.async_evaluate: heats, optionally ahead of a stricter upcoming target."""
+
+    async def _evaluate(self, current_temp, targets=None, **_kwargs):
+        self._lead_heat = lead_heat
+        return "heating", 1.0
+
+    return _evaluate
+
+
+class TestOrchestratedPreheat:
+    """MPC heats ahead of the comfort block while the eco target is still in force."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("lead_heat", [21.0, None])
+    async def test_sources_follow_the_target_the_run_heats_for(self, hass, mock_config_entry, lead_heat):
+        """Room at 19 °C above eco 17 °C: only the lead target to 21 °C gives the run a source."""
+        from custom_components.roommind.control.mpc_controller import MPCController
+
+        room = TestHeatSourceOrchestration.ROOM_WITH_BOTH
+        store = _make_store_mock({"living_room_abc12345": room})
+        hass.data = {"roommind": {"store": store}}
+
+        ac_state = MagicMock()
+        ac_state.state = "off"
+        ac_state.attributes = {"hvac_modes": ["heat", "cool", "off"], "min_temp": 16, "max_temp": 30}
+        base_mock = make_mock_states_get(temp="19.0", schedule_state="off")
+
+        def custom_get(eid):
+            if eid == "climate.living_room_ac":
+                return ac_state
+            return base_mock(eid)
+
+        hass.states.get = MagicMock(side_effect=custom_get)
+        hass.services.async_call = AsyncMock()
+
+        with patch.object(MPCController, "async_evaluate", _evaluate_heating_with_lead(lead_heat)):
+            coordinator = _create_coordinator(hass, mock_config_entry)
+            await coordinator._async_update_data()
+
+        sources = coordinator._heat_source_states["living_room_abc12345"]
+        setpoints = [
+            c[0][2]["temperature"] for c in hass.services.async_call.call_args_list if c[0][1] == "set_temperature"
+        ]
+        if lead_heat is None:
+            assert sources == "none"
+            assert all(t <= 17.0 for t in setpoints)
+        else:
+            assert sources != "none"
+            assert any(t > 21.0 for t in setpoints)

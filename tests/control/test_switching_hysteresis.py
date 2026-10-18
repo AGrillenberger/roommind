@@ -352,6 +352,67 @@ def test_ac_heating_alone_in_the_bang_bang_fallback():
     assert ufh._evaluate_bangbang(21.1, TargetTemps(heat=21.0, cool=None)) == MODE_HEATING
 
 
+def _preheat_only_on_floor_rules(monkeypatch) -> list[str]:
+    """The floor's rules start the pre-heat for a comfort block 30 min ahead, the AC's not yet."""
+    systems: list[str] = []
+
+    def optimize(self, *args, **kwargs):
+        systems.append(self.heating_system_type)
+        action = MODE_HEATING if self.heating_system_type == "underfloor" else MODE_IDLE
+        return MPCPlan(
+            actions=[action] * 24,
+            temperatures=[19.5] * 25,
+            power_fractions=[1.0 if action == MODE_HEATING else 0.0] * 24,
+            lookahead_blocks=24,
+        )
+
+    monkeypatch.setattr(MPCOptimizer, "optimize", optimize)
+    return systems
+
+
+def _eco_then_comfort():
+    switch = time.time() + 30 * 60
+    return lambda ts: TargetTemps(heat=18.0 if ts < switch else 21.0, cool=None)
+
+
+@pytest.mark.parametrize(
+    ("outdoor", "expected_mode", "expected_systems"),
+    [
+        # mild: the AC alone would run the pre-heat, so the AC's rules decide (not yet)
+        (10.0, MODE_IDLE, ["underfloor", ""]),
+        # cold: the floor runs it, its rules stand
+        (0.0, MODE_HEATING, ["underfloor"]),
+    ],
+)
+def test_preheat_follows_the_rules_of_the_sources_that_run_it(monkeypatch, outdoor, expected_mode, expected_systems):
+    """Above eco, before comfort: the target in force shows no gap, so the floor's rules
+    applied; the orchestrator then sent the AC alone, whose rules stopped it again the next
+    cycle (heat/off every 30 s)."""
+    systems = _preheat_only_on_floor_rules(monkeypatch)
+    ctrl = _orchestrated(outdoor, target_resolver=_eco_then_comfort())
+    assert ctrl._evaluate_mpc(19.5, TargetTemps(heat=18.0, cool=None))[0] == expected_mode
+    assert systems == expected_systems
+    assert ctrl._run_system == expected_systems[-1]
+
+
+def test_a_large_gap_to_the_lead_brings_back_the_floor_rules(monkeypatch):
+    """Just below eco the AC alone would close the gap, but the run heats for comfort
+    4 K up: both sources run it, so the floor's rules apply."""
+    systems: list[str] = []
+
+    def optimize(self, *args, **kwargs):
+        systems.append(self.heating_system_type)
+        return MPCPlan(
+            actions=[MODE_HEATING] * 24, temperatures=[17.0] * 25, power_fractions=[1.0] * 24, lookahead_blocks=24
+        )
+
+    monkeypatch.setattr(MPCOptimizer, "optimize", optimize)
+    ctrl = _orchestrated(10.0, target_resolver=_eco_then_comfort())
+    assert ctrl._evaluate_mpc(16.9, TargetTemps(heat=18.0, cool=None))[0] == MODE_HEATING
+    assert systems == ["", "underfloor"]
+    assert ctrl._run_system == "underfloor"
+
+
 def test_orchestration_without_ufh_keeps_the_room_rules():
     ctrl = _controller({**ORCH_UFH_ROOM, "heating_system_type": ""}, outdoor_temp=10.0)
     assert ctrl._resolve_run_system(20.0, 21.0) == ""
