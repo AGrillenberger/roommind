@@ -154,3 +154,24 @@ def test_coarse_zigbee_sensor_reports_in_two_tenth_steps():
         if s.update(22.0 + i * 0.005, float(i * 30), -1e9):
             reported.append(s.value)
     assert reported == [22.0, 22.2, 22.4, 22.6]
+
+
+def _weather(**spec):  # noqa: ANN003
+    from roommind_sim.weather import WeatherModel
+
+    return WeatherModel({"profile": "temperate", **spec}, 52.5, 13.4, "Europe/Berlin", seed=1)
+
+
+def test_forecast_error_grows_with_lead_time_and_leaves_the_weather_alone():
+    now = 1_768_176_000.0  # 2026-01-12
+    real, perfect = _weather(), _weather(forecast_error=False)
+    assert real.at(now + 7200).temp_c == perfect.at(now + 7200).temp_c
+    fc = real.forecast(now, hours=48)
+    exact = perfect.forecast(now, hours=48)
+    temp_err = [a["temperature"] - b["temperature"] for a, b in zip(fc, exact, strict=True)]
+    cloud_err = [a["cloud_coverage"] - b["cloud_coverage"] for a, b in zip(fc, exact, strict=True)]
+    assert abs(temp_err[0]) < 0.6  # next hour: almost a nowcast
+    rms_day2 = math.sqrt(sum(e * e for e in temp_err[24:]) / 24)
+    assert 0.5 < rms_day2 < 3.0
+    assert max(abs(e) for e in cloud_err) > 5
+    assert all(0 <= a["cloud_coverage"] <= 100 for a in fc)

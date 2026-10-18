@@ -22,6 +22,17 @@ from .scenario.loader import deep_merge, load_profile
 
 _NOISE_PERIODS_H = (31.0, 65.0, 122.0, 233.0)
 _CLOUD_PERIODS_H = (5.0, 11.0, 23.0, 47.0)
+_FORECAST_ERROR_PERIODS_H = (9.0, 17.0, 29.0, 53.0)
+# Point forecasts are not perfect: error grows with lead time and is zero for "now".
+# Typical magnitudes for central Europe (2 m temperature ~1-1.5 K on day 1, cloud cover
+# is the weakest forecast element); assumptions, not fitted. forecast_error: false = perfect.
+DEFAULT_FORECAST_ERROR = {
+    "temp_c": 1.0,
+    "temp_c_per_day": 0.4,
+    "cloud_pct": 20.0,
+    "cloud_pct_per_day": 5.0,
+    "ramp_h": 3.0,
+}
 
 
 @dataclass
@@ -67,7 +78,12 @@ class WeatherModel:
         self._phases = [rng.uniform(0, 2 * math.pi) for _ in range(8)]
         self._overrides: list[_Override] = []
         self.forecast_available = bool(self.p.get("forecast", True))
-        self.forecast_error_c_per_day = float(self.p.get("forecast_error_c_per_day", 0.0))
+        err = self.p.get("forecast_error", True)
+        self.forecast_error: dict[str, float] | None = (
+            None if err is False else {**DEFAULT_FORECAST_ERROR, **(err if isinstance(err, dict) else {})}
+        )
+        fc_rng = random.Random(f"forecast:{seed}")  # own stream: the weather itself stays unchanged
+        self._fc_phases = [fc_rng.uniform(0, 2 * math.pi) for _ in range(8)]
         self._replay = _CsvReplay(Path(self.p["csv"]), self.p.get("columns") or {}) if self.p.get("csv") else None
 
     # --- public ----------------------------------------------------------------------
@@ -126,9 +142,20 @@ class WeatherModel:
 
     def _fc(self, ts: float, now: float) -> Outdoor:
         o = self.at(ts)
-        if self.forecast_error_c_per_day:
-            lead_days = max(0.0, (ts - now) / 86400)
-            o.temp_c += self.forecast_error_c_per_day * lead_days * math.sin(ts / 40000 + self._phases[7])
+        e = self.forecast_error
+        if e:
+            lead_h = max(0.0, (ts - now) / 3600)
+            ramp = min(1.0, lead_h / e["ramp_h"]) if e["ramp_h"] > 0 else 1.0
+            hours = ts / 3600
+            temp_sd = ramp * (e["temp_c"] + e["temp_c_per_day"] * lead_h / 24)
+            cloud_sd = ramp * (e["cloud_pct"] + e["cloud_pct_per_day"] * lead_h / 24)
+            o.temp_c += temp_sd * _smooth_noise(hours, _FORECAST_ERROR_PERIODS_H, self._fc_phases[:4])
+            o.cloud_pct = max(
+                0.0,
+                min(
+                    100.0, o.cloud_pct + cloud_sd * _smooth_noise(hours, _FORECAST_ERROR_PERIODS_H, self._fc_phases[4:])
+                ),
+            )
         return o
 
     def _base(self, epoch: float) -> tuple[float, float, float, float]:
