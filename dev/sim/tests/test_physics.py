@@ -133,3 +133,17 @@ def test_sensor_housing_lags_the_air():
     for t in range(10, 610, 10):
         s.update(21.0, float(t), -1e9)
     assert s.value == pytest.approx(20.63, abs=0.02)  # ~63 % of the step after one time constant
+
+
+def test_coarse_zigbee_sensor_reports_in_two_tenth_steps():
+    from roommind_sim.scenario.loader import load_profile
+    from roommind_sim.scenario.model import SensorSpec
+    from roommind_sim.sensors import SimSensor
+
+    params = {**load_profile("sensors", "sonoff_snzb02d", "test"), "noise": 0.0}
+    s = SimSensor(SensorSpec(entity_id="sensor.t", kind="temperature", room="r", name="t", params=params), seed=1)
+    reported = []
+    for i in range(120):
+        if s.update(22.0 + i * 0.005, float(i * 30), -1e9):
+            reported.append(s.value)
+    assert reported == [22.0, 22.2, 22.4, 22.6]
