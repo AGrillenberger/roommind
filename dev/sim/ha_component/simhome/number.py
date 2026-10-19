@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from roommind_sim.devices import SimDevice
@@ -28,6 +29,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEnt
     )
 
 
+def valve_device_info(dev: SimDevice) -> DeviceInfo:
+    """One device for the TRV and its degree numbers, as Zigbee2MQTT creates it (the panel looks there)."""
+    return DeviceInfo(identifiers={(DOMAIN, dev.entity_id)}, name=dev.spec.name, model=dev.spec.model)
+
+
 class SimValveNumber(SimEntity, NumberEntity):
     _attr_native_min_value = 0
     _attr_native_max_value = 100
@@ -39,6 +45,7 @@ class SimValveNumber(SimEntity, NumberEntity):
         super().__init__(rt, entity_id, f"{dev.spec.name} valve {kind} degree")
         self.dev = dev
         self.kind = kind
+        self._attr_device_info = valve_device_info(dev)
 
     @property
     def available(self) -> bool:

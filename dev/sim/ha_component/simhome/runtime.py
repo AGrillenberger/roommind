@@ -16,6 +16,7 @@ from homeassistant.auth.const import GROUP_ID_ADMIN
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers import area_registry as ar
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import floor_registry as fr
 from homeassistant.helpers.event import async_track_point_in_utc_time, async_track_time_interval
@@ -116,8 +117,15 @@ class SimRuntime:
                     rooms_by_entity[w.sensor] = room.area_id
             for c in room.covers:
                 rooms_by_entity[c.entity_id] = room.area_id
+        devices = dr.async_get(self.hass)
         for eid, area in rooms_by_entity.items():
-            if reg.async_get(eid) is not None:
+            entry = reg.async_get(eid)
+            if entry is None:
+                continue
+            if entry.device_id:
+                # A TRV with valve numbers shares one device (as in Zigbee2MQTT); HA takes the area from it
+                devices.async_update_device(entry.device_id, area_id=area)
+            else:
                 reg.async_update_entity(eid, area_id=area)
 
     # --- timers -------------------------------------------------------------------------

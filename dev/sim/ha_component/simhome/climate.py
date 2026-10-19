@@ -15,6 +15,7 @@ from roommind_sim.devices import SimDevice
 
 from .const import DOMAIN
 from .entity import SimEntity
+from .number import valve_device_info
 
 _ACTIONS = {
     "heating": HVACAction.HEATING,
@@ -49,6 +50,8 @@ class SimClimate(SimEntity, ClimateEntity):
         if "off" in dev.hvac_modes:
             features |= ClimateEntityFeature.TURN_OFF | ClimateEntityFeature.TURN_ON
         self._attr_supported_features = features
+        if dev.spec.valve_numbers():
+            self._attr_device_info = valve_device_info(dev)
 
     @property
     def available(self) -> bool:
