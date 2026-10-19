@@ -198,7 +198,7 @@
   "devices.idle_fan_mode": "Velocità ventola",
   "devices.idle_fan_mode_keep": "Non modificare",
   "devices.setpoint_mode": "Modalità setpoint",
-  "devices.setpoint_mode_proportional": "Proporzionale (controllo valvola)",
+  "devices.setpoint_mode_proportional": "Proporzionale (setpoint maggiorato)",
   "devices.setpoint_mode_direct": "Diretta (regola il dispositivo)",
   "devices.setpoint_offset": "Scostamento del setpoint",
   "devices.setpoint_offset_hint": "Usalo se il sensore del dispositivo misura una temperatura diversa dal sensore della stanza. Lo scostamento viene sommato all'obiettivo della stanza prima di inviarlo al dispositivo (riscaldamento e raffrescamento). Il dispositivo misura più freddo della stanza: valore negativo. Misura più caldo: valore positivo. Esempio: vuoi 24°, ma durante il raffrescamento il dispositivo crede che la stanza sia 2° più fredda di quanto sia e si ferma troppo presto. Inserisci -2: il dispositivo riceve 22° e continua a funzionare finché la stanza non è davvero a 24°. 0 = nessuno scostamento.",
@@ -217,6 +217,12 @@
   "devices.coil_dry_global_off_hint": "L'asciugatura dell'evaporatore è disattivata a livello globale, quindi per questo dispositivo non viene eseguita. Attivala nelle impostazioni, oppure imposta questo dispositivo su \"Sempre attiva\".",
   "devices.valve_protection_excluded": "Escluso dalla protezione valvole",
   "devices.valve_protection_exclude_hint": "Questa entità non verrà azionata dalla protezione valvole (es. entità caldaia virtuali)",
+  "devices.valve_direct_control": "Controllo diretto della valvola",
+  "devices.valve_opening_entity": "Grado di apertura della valvola",
+  "devices.valve_closing_entity": "Grado di chiusura della valvola",
+  "devices.valve_direct_control_hint": "Per le valvole termostatiche di cui Home Assistant può impostare l'apertura (p. es. SONOFF TRVZB: valve_opening_degree e valve_closing_degree, servono entrambe). RoomMind mantiene la valvola all'apertura di cui la stanza ha bisogno, p. es. 30 %, invece di aprirla del tutto: meno movimenti, più silenzio e un calore più uniforme. Svuota i campi o disattiva il controllo del clima e RoomMind le riporta entrambe al 100 %.",
+  "devices.valve_direct_control_toggle_hint": "Per le valvole termostatiche di cui Home Assistant può impostare l'apertura (p. es. SONOFF TRVZB). RoomMind mantiene la valvola all'apertura di cui la stanza ha bisogno, p. es. 30 %, invece di aprirla del tutto: meno movimenti, più silenzio e un calore più uniforme. Disattivato, o con il controllo del clima disattivato, la valvola torna alla regolazione della testina.",
+  "devices.valve_direct_badge": "Valvola diretta",
   "devices.info.types_title": "Tipi di dispositivo",
   "devices.info.types_body": "Termostato indica un termostato per radiatore / TRV. Dispositivo di climatizzazione indica un condizionatore, una pompa di calore o un'altra entità climate usata per raffrescare o riscaldare ad aria. Entrambi sono entità climate di Home Assistant; la differenza sta nel modo in cui RoomMind li controlla.",
   "devices.info.control_title": "Come li controlla RoomMind",
@@ -567,5 +573,6 @@
   "heat_source.ac_min_outdoor": "Temp. esterna minima per riscaldare con l'AC",
   "heat_source.ac_min_outdoor_hint": "Sotto questa temperatura disabilita del tutto il riscaldamento tramite AC, per proteggere la pompa di calore.",
   "heat_source.ac_min_outdoor_suffix": "°C",
-  "heat_source.summary_disabled": "La scelta intelligente della fonte è disattivata"
+  "heat_source.summary_disabled": "La scelta intelligente della fonte è disattivata",
+  "devices.valve_closing_entity_hint": "Mantiene la valvola all'apertura impostata, qualunque cosa voglia la regolazione della testina. Viene compilato automaticamente se il dispositivo ne ha uno."
 }

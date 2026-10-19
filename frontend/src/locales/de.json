@@ -198,7 +198,7 @@
   "devices.idle_fan_mode": "Lüftergeschwindigkeit",
   "devices.idle_fan_mode_keep": "Nicht ändern",
   "devices.setpoint_mode": "Sollwert-Modus",
-  "devices.setpoint_mode_proportional": "Proportional (Ventilsteuerung)",
+  "devices.setpoint_mode_proportional": "Proportional (erhöhter Sollwert)",
   "devices.setpoint_mode_direct": "Direkt (Gerät regelt selbst)",
   "devices.setpoint_offset": "Sollwert-Versatz",
   "devices.setpoint_offset_hint": "Nutze das, wenn das Gerät die Temperatur anders misst als dein Raumsensor. Der Versatz wird zum Raumziel addiert, bevor es ans Gerät geht (Heizen und Kühlen). Misst das Gerät kälter als der Raum: negativer Wert. Misst es wärmer: positiver Wert. Beispiel: Du willst 24°, das Gerät hält den Raum beim Kühlen aber für 2° kälter als er ist und schaltet zu früh ab. Trag -2 ein: Das Gerät bekommt dann 22° und läuft weiter, bis der Raum wirklich 24° hat. 0 = kein Versatz.",
