@@ -221,6 +221,7 @@
   "devices.valve_opening_entity": "Degré d'ouverture de la vanne",
   "devices.valve_closing_entity": "Degré de fermeture de la vanne",
   "devices.valve_direct_control_hint": "Pour les têtes thermostatiques dont Home Assistant peut régler l'ouverture (p. ex. SONOFF TRVZB : valve_opening_degree et valve_closing_degree, les deux sont nécessaires). RoomMind maintient alors la vanne à l'ouverture dont la pièce a besoin, p. ex. 30 %, au lieu de l'ouvrir complètement : moins de mouvements, plus silencieux et une chaleur plus régulière. Videz les champs ou désactivez le contrôle climatique et RoomMind remet les deux à 100 %.",
+  "devices.valve_direct_control_toggle_hint": "Pour les têtes thermostatiques dont Home Assistant peut régler l'ouverture (p. ex. SONOFF TRVZB). RoomMind maintient alors la vanne à l'ouverture dont la pièce a besoin, p. ex. 30 %, au lieu de l'ouvrir complètement : moins de mouvements, plus silencieux et une chaleur plus régulière. Désactivé, ou avec le contrôle climatique désactivé, la tête régule de nouveau la vanne elle-même.",
   "devices.valve_direct_badge": "Vanne directe",
   "devices.info.types_title": "Types d'appareil",
   "devices.info.types_body": "Thermostat désigne un thermostat de radiateur / TRV. Appareil climatique désigne un climatiseur, une pompe à chaleur ou autre entité climatique utilisée pour le refroidissement ou le chauffage à air pulsé. Les deux sont des entités climatiques dans Home Assistant; la différence réside dans la façon dont RoomMind les contrôle.",

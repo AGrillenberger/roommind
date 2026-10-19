@@ -10,6 +10,7 @@ import { masterDetailStyles } from "../styles/master-detail-styles";
 import { inputStyles } from "../styles/input-styles";
 import "./shared/rs-master-detail";
 import "./shared/rs-info-icon";
+import "./shared/rs-toggle-row";
 
 /**
  * UI-only sentinel for "inherit the global setting".  ha-select cannot render an
@@ -712,6 +713,13 @@ export class RsDeviceSection extends LitElement {
     // Direct valve control needs the room sensor (Full Control); offered only when the TRV has number entities
     const showValveFields =
       isThermostat && !!this.selectedTempSensor && (deviceNumbers.length > 0 || hasValve);
+    // A recognised pair needs no entity picking: one switch, the pickers stay for anything else
+    const valvePair = this._detectValvePair(deviceNumbers);
+    const valveAsToggle =
+      !!valvePair &&
+      (!device.valve_opening_entity ||
+        (device.valve_opening_entity === valvePair[0] &&
+          device.valve_closing_entity === valvePair[1]));
 
     return html`
       <div class="detail-head">
@@ -1065,7 +1073,22 @@ export class RsDeviceSection extends LitElement {
           : nothing
       }
       ${
-        showValveFields
+        showValveFields && valveAsToggle
+          ? html`
+              <div class="detail-field">
+                <rs-toggle-row
+                  .label=${localize("devices.valve_direct_control", lang)}
+                  .hint=${localize("devices.valve_direct_control_toggle_hint", lang)}
+                  .checked=${hasValve}
+                  @toggle-changed=${(e: CustomEvent<boolean>) =>
+                    this._onValveToggle(entityId, e.detail ? valvePair : null)}
+                ></rs-toggle-row>
+              </div>
+            `
+          : nothing
+      }
+      ${
+        showValveFields && !valveAsToggle
           ? html`
               <div class="detail-section-label">
                 ${localize("devices.valve_direct_control", lang)}
@@ -1252,6 +1275,29 @@ export class RsDeviceSection extends LitElement {
     // renamed or translated entity ids fall back to all numbers of the device
     const valve = numbers.filter((eid) => /valve|opening|closing|ventil|vanne/.test(eid));
     return valve.length ? valve : numbers;
+  }
+
+  /** Opening and closing degree of the device, recognised by name (Zigbee2MQTT: *_valve_opening_degree). */
+  private _detectValvePair(numbers: string[]): [string, string] | null {
+    for (const opening of numbers) {
+      if (!opening.includes("opening")) continue;
+      const closing = opening.replace(/opening/g, "closing");
+      if (numbers.includes(closing)) return [opening, closing];
+    }
+    return null;
+  }
+
+  private _onValveToggle(entityId: string, pair: [string, string] | null): void {
+    this._fireDeviceChanged(
+      this.devices.map((d) => {
+        if (d.entity_id !== entityId) return d;
+        const updated = { ...d };
+        delete updated.valve_opening_entity;
+        delete updated.valve_closing_entity;
+        if (pair) [updated.valve_opening_entity, updated.valve_closing_entity] = pair;
+        return updated;
+      }),
+    );
   }
 
   private _onValveOpeningChange(entityId: string, value: string, deviceNumbers: string[]): void {

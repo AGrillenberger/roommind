@@ -221,6 +221,7 @@
   "devices.valve_opening_entity": "Ventil-Öffnungsgrad",
   "devices.valve_closing_entity": "Ventil-Schließgrad",
   "devices.valve_direct_control_hint": "Für Thermostate, bei denen Home Assistant die Ventilöffnung setzen kann (z. B. SONOFF TRVZB: valve_opening_degree und valve_closing_degree, beide nötig). RoomMind hält das Ventil dann auf der Öffnung, die der Raum braucht, z. B. 30 %, statt es ganz aufzumachen: weniger Ventilbewegungen, leiser und gleichmäßiger. Felder leeren oder Klimasteuerung ausschalten setzt beide wieder auf 100 %.",
+  "devices.valve_direct_control_toggle_hint": "Für Thermostate, bei denen Home Assistant die Ventilöffnung setzen kann (z. B. SONOFF TRVZB). RoomMind hält das Ventil dann auf der Öffnung, die der Raum braucht, z. B. 30 %, statt es ganz aufzumachen: weniger Ventilbewegungen, leiser und gleichmäßiger. Ausgeschaltet oder bei abgeschalteter Klimasteuerung regelt das Thermostat das Ventil wieder selbst.",
   "devices.valve_direct_badge": "Direktes Ventil",
   "devices.info.types_title": "Gerätetypen",
   "devices.info.types_body": "Thermostat bedeutet Heizkörperthermostat / TRV. Klimagerät bedeutet AC, Wärmepumpe oder eine andere Klima-Entität für Kühlung oder Warmluftheizung. Beides sind Home-Assistant-Klima-Entitäten; der Unterschied liegt darin, wie RoomMind sie ansteuert.",
