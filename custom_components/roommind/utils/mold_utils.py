@@ -118,9 +118,7 @@ def calculate_mold_risk(
         srh = rh_room + 10.0  # conservative estimate
         t_surface = None
 
-    return _risk_from_surface_rh(srh), round(srh, 1), (
-        round(t_surface, 1) if t_surface is not None else None
-    )
+    return _risk_from_surface_rh(srh), round(srh, 1), (round(t_surface, 1) if t_surface is not None else None)
 
 
 def _risk_from_surface_rh(srh: float) -> str:
