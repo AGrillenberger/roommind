@@ -24,8 +24,35 @@ export class RsSettingsMold extends RsSettingsBase {
     const l = this.hass.language;
 
     return html`
+      <!-- Shared mold calculation parameters (visible when detection or prevention is enabled) -->
+      ${
+        this.moldDetectionEnabled || this.moldPreventionEnabled
+          ? html`
+              <div class="settings-section first">
+                <div class="threshold-grid">
+                  <div class="threshold-field">
+                    <ha-textfield
+                      .value=${String(this.moldFRsi)}
+                      .label=${localize("mold.f_rsi", l)}
+                      type="number"
+                      step="0.05"
+                      min="0"
+                      max="1"
+                      @change=${(e: Event) => {
+                        const v = parseFloat((e.target as HTMLInputElement).value);
+                        if (!isNaN(v) && v >= 0 && v <= 1) this._fire("moldFRsi", v);
+                      }}
+                    ></ha-textfield>
+                    <span class="field-hint">${localize("mold.f_rsi_hint", l)}</span>
+                  </div>
+                </div>
+              </div>
+            `
+          : nothing
+      }
+
       <!-- Detection section -->
-      <div class="settings-section first">
+      <div class="settings-section">
         <div class="toggle-row">
           <div class="toggle-text">
             <span class="toggle-label">
@@ -62,21 +89,6 @@ export class RsSettingsMold extends RsSettingsBase {
                       }}
                     ></ha-textfield>
                     <span class="field-hint">${localize("mold.threshold_hint", l)}</span>
-                  </div>
-                  <div class="threshold-field">
-                    <ha-textfield
-                      .value=${String(this.moldFRsi)}
-                      .label=${localize("mold.f_rsi", l)}
-                      type="number"
-                      step="0.05"
-                      min="0"
-                      max="1"
-                      @change=${(e: Event) => {
-                        const v = parseFloat((e.target as HTMLInputElement).value);
-                        if (!isNaN(v) && v >= 0 && v <= 1) this._fire("moldFRsi", v);
-                      }}
-                    ></ha-textfield>
-                    <span class="field-hint">${localize("mold.f_rsi_hint", l)}</span>
                   </div>
                   <div class="threshold-field">
                     <ha-textfield
