@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 
 from ..const import (
     DEFAULT_MOLD_COOLDOWN_MINUTES,
+    DEFAULT_MOLD_F_RSI,
     DEFAULT_MOLD_HUMIDITY_THRESHOLD,
     DEFAULT_MOLD_SUSTAINED_MINUTES,
     MOLD_HYSTERESIS,
@@ -35,6 +36,7 @@ class MoldResult:
 
     risk_level: str = MOLD_RISK_OK
     surface_rh: float | None = None
+    surface_temp: float | None = None
     prevention_active: bool = False
     prevention_delta: float = 0.0
 
@@ -71,13 +73,15 @@ class MoldManager:
         if current_humidity is None or current_temp is None:
             return result
 
-        risk_level, surface_rh = calculate_mold_risk(
+        risk_level, surface_rh, surface_temp = calculate_mold_risk(
             current_temp,
             current_humidity,
             outdoor_temp,
+            f_rsi=settings.get("mold_f_rsi", DEFAULT_MOLD_F_RSI),
         )
         result.risk_level = risk_level
         result.surface_rh = surface_rh
+        result.surface_temp = surface_temp
 
         threshold = settings.get(
             "mold_humidity_threshold",

@@ -595,10 +595,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         current_temp: float | None,
         current_humidity: float | None,
         settings: dict,
-    ) -> tuple[str, float | None, bool, float]:
+    ) -> tuple[str, float | None, float | None, bool, float]:
         """Evaluate mold risk for a room.
 
-        Returns (mold_risk_level, mold_surface_rh, mold_prevention_active, mold_prevention_delta).
+        Returns (mold_risk_level, mold_surface_rh, mold_surface_temp,
+                 mold_prevention_active, mold_prevention_delta).
         """
         mold = await self._mold_manager.evaluate(
             area_id,
@@ -610,7 +611,13 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             celsius_delta_to_ha_fn=lambda d: celsius_delta_to_ha(self.hass, d),  # type: ignore[misc]
             ha_temp_unit_str_fn=lambda: ha_temp_unit_str(self.hass),  # type: ignore[misc]
         )
-        return mold.risk_level, mold.surface_rh, mold.prevention_active, mold.prevention_delta
+        return (
+            mold.risk_level,
+            mold.surface_rh,
+            mold.surface_temp,
+            mold.prevention_active,
+            mold.prevention_delta,
+        )
 
     def note_override_seed(self, area_id: str) -> None:
         """Mark an override just seeded by switching the override entity on.
@@ -676,6 +683,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 "force_off": False,
                 "mold_risk_level": "ok",
                 "mold_surface_rh": None,
+                "mold_surface_temp": None,
                 "mold_prevention_active": False,
                 "mold_prevention_delta": 0,
                 "shading_factor": 1.0,
@@ -703,6 +711,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         (
             mold_risk_level,
             mold_surface_rh,
+            mold_surface_temp,
             mold_prevention_active_room,
             mold_prevention_temp_delta,
         ) = await self._evaluate_mold_risk(area_id, current_temp, current_humidity, settings)
@@ -1227,6 +1236,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             power_fraction=power_fraction,
             mold_risk_level=mold_risk_level,
             mold_surface_rh=mold_surface_rh,
+            mold_surface_temp=mold_surface_temp,
             mold_prevention_active_room=mold_prevention_active_room,
             mold_prevention_temp_delta=mold_prevention_temp_delta,
             shading_factor=shading_factor,
@@ -1491,6 +1501,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         power_fraction: float,
         mold_risk_level: str | None,
         mold_surface_rh: float | None,
+        mold_surface_temp: float | None,
         mold_prevention_active_room: bool,
         mold_prevention_temp_delta: float,
         shading_factor: float | None,
@@ -1589,6 +1600,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "force_off": force_off,
             "mold_risk_level": mold_risk_level,
             "mold_surface_rh": (round(mold_surface_rh, 1) if mold_surface_rh is not None else None),
+            "mold_surface_temp": (round(mold_surface_temp, 1) if mold_surface_temp is not None else None),
             "mold_prevention_active": mold_prevention_active_room,
             "mold_prevention_delta": mold_prevention_temp_delta,
             "shading_factor": shading_factor,

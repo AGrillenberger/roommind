@@ -14,6 +14,7 @@ export class RsSettingsMold extends RsSettingsBase {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ type: Boolean }) public moldDetectionEnabled = false;
   @property({ type: Number }) public moldHumidityThreshold = 70;
+  @property({ type: Number }) public moldFRsi = 0.80;
   @property({ type: Number }) public moldSustainedMinutes = 30;
   @property({ type: Boolean }) public moldPreventionEnabled = false;
   @property({ type: String }) public moldPreventionIntensity: "light" | "medium" | "strong" =
@@ -61,6 +62,21 @@ export class RsSettingsMold extends RsSettingsBase {
                       }}
                     ></ha-textfield>
                     <span class="field-hint">${localize("mold.threshold_hint", l)}</span>
+                  </div>
+                  <div class="threshold-field">
+                    <ha-textfield
+                      .value=${String(this.moldFRsi)}
+                      .label=${localize("mold.f_rsi", l)}
+                      type="number"
+                      step="0.05"
+                      min="0"
+                      max="1"
+                      @change=${(e: Event) => {
+                        const v = parseFloat((e.target as HTMLInputElement).value);
+                        if (!isNaN(v) && v >= 0 && v <= 1) this._fire("moldFRsi", v);
+                      }}
+                    ></ha-textfield>
+                    <span class="field-hint">${localize("mold.f_rsi_hint", l)}</span>
                   </div>
                   <div class="threshold-field">
                     <ha-textfield

@@ -58,6 +58,7 @@ export class RsSettings extends LitElement {
   @state() private _valveProtectionInterval = 7;
   @state() private _moldDetectionEnabled = false;
   @state() private _moldHumidityThreshold = 70;
+  @state() private _moldFRsi = 0.80;
   @state() private _moldSustainedMinutes = 30;
   @state() private _moldNotificationCooldown = 60;
   @state() private _moldNotificationsEnabled = true;
@@ -122,6 +123,7 @@ export class RsSettings extends LitElement {
       this._valveProtectionInterval = s.valve_protection_interval_days ?? 7;
       this._moldDetectionEnabled = s.mold_detection_enabled ?? false;
       this._moldHumidityThreshold = s.mold_humidity_threshold ?? 70;
+      this._moldFRsi = s.mold_f_rsi ?? 0.80;
       this._moldSustainedMinutes = s.mold_sustained_minutes ?? 30;
       this._moldNotificationCooldown = s.mold_notification_cooldown ?? 60;
       this._moldNotificationsEnabled = s.mold_notifications_enabled ?? true;
@@ -275,6 +277,7 @@ export class RsSettings extends LitElement {
           .hass=${this.hass}
           .moldDetectionEnabled=${this._moldDetectionEnabled}
           .moldHumidityThreshold=${this._moldHumidityThreshold}
+          .moldFRsi=${this._moldFRsi}
           .moldSustainedMinutes=${this._moldSustainedMinutes}
           .moldPreventionEnabled=${this._moldPreventionEnabled}
           .moldPreventionIntensity=${this._moldPreventionIntensity}
@@ -409,6 +412,7 @@ export class RsSettings extends LitElement {
         coil_dry_drain_minutes: this._coilDryDrainMinutes,
         mold_detection_enabled: this._moldDetectionEnabled,
         mold_humidity_threshold: this._moldHumidityThreshold,
+        mold_f_rsi: this._moldFRsi,
         mold_sustained_minutes: this._moldSustainedMinutes,
         mold_notification_cooldown: this._moldNotificationCooldown,
         mold_notifications_enabled: this._moldNotificationsEnabled,

@@ -41,7 +41,7 @@ async def test_prevention_activation_sends_notification(mm):
     with (
         patch(
             "custom_components.roommind.managers.mold_manager.calculate_mold_risk",
-            return_value=("warning", 75.0),
+            return_value=("warning", 75.0, 14.5),
         ),
         patch(
             "custom_components.roommind.managers.mold_manager.mold_prevention_delta",
@@ -79,7 +79,7 @@ async def test_prevention_notification_not_sent_without_helper_fns(mm):
     with (
         patch(
             "custom_components.roommind.managers.mold_manager.calculate_mold_risk",
-            return_value=("warning", 75.0),
+            return_value=("warning", 75.0, 14.5),
         ),
         patch(
             "custom_components.roommind.managers.mold_manager.mold_prevention_delta",
@@ -115,7 +115,7 @@ async def test_prevention_notification_not_sent_on_second_evaluation(mm):
     with (
         patch(
             "custom_components.roommind.managers.mold_manager.calculate_mold_risk",
-            return_value=("warning", 75.0),
+            return_value=("warning", 75.0, 14.5),
         ),
         patch(
             "custom_components.roommind.managers.mold_manager.mold_prevention_delta",
@@ -164,7 +164,7 @@ async def test_remove_room_clears_state(mm):
     with (
         patch(
             "custom_components.roommind.managers.mold_manager.calculate_mold_risk",
-            return_value=("warning", 75.0),
+            return_value=("warning", 75.0, 14.5),
         ),
         patch(
             "custom_components.roommind.managers.mold_manager.mold_prevention_delta",
@@ -217,7 +217,7 @@ async def test_detection_notification_sent_on_risk(mm):
     with (
         patch(
             "custom_components.roommind.managers.mold_manager.calculate_mold_risk",
-            return_value=("warning", 75.0),
+            return_value=("warning", 75.0, 14.5),
         ),
         patch(
             "custom_components.roommind.managers.mold_manager.async_send_mold_notification",
@@ -250,7 +250,7 @@ async def test_hysteresis_deactivation(mm):
     with (
         patch(
             "custom_components.roommind.managers.mold_manager.calculate_mold_risk",
-            return_value=("warning", 75.0),
+            return_value=("warning", 75.0, 14.5),
         ),
         patch(
             "custom_components.roommind.managers.mold_manager.mold_prevention_delta",
@@ -278,7 +278,7 @@ async def test_hysteresis_deactivation(mm):
     with (
         patch(
             "custom_components.roommind.managers.mold_manager.calculate_mold_risk",
-            return_value=("ok", 60.0),
+            return_value=("ok", 60.0, 17.0),
         ),
         patch(
             "custom_components.roommind.managers.mold_manager.dismiss_mold_notification",
@@ -321,7 +321,7 @@ async def test_sustained_minutes_delays_notification(mm):
     with (
         patch(
             "custom_components.roommind.managers.mold_manager.calculate_mold_risk",
-            return_value=("warning", 75.0),
+            return_value=("warning", 75.0, 14.5),
         ),
         patch(
             "custom_components.roommind.managers.mold_manager.async_send_mold_notification",
@@ -378,7 +378,7 @@ async def test_dismiss_notification_on_risk_clear(mm):
     with (
         patch(
             "custom_components.roommind.managers.mold_manager.calculate_mold_risk",
-            return_value=("warning", 75.0),
+            return_value=("warning", 75.0, 14.5),
         ),
         patch(
             "custom_components.roommind.managers.mold_manager.mold_prevention_delta",
@@ -404,7 +404,7 @@ async def test_dismiss_notification_on_risk_clear(mm):
     with (
         patch(
             "custom_components.roommind.managers.mold_manager.calculate_mold_risk",
-            return_value=("ok", 60.0),
+            return_value=("ok", 60.0, 17.0),
         ),
         patch(
             "custom_components.roommind.managers.mold_manager.dismiss_mold_notification",
@@ -471,3 +471,57 @@ async def test_no_humidity_returns_early(mm):
     assert result.risk_level == "ok"
     assert result.surface_rh is None
     assert result.prevention_active is False
+
+
+# --- f_Rsi plumbing ---
+
+
+@pytest.mark.asyncio
+async def test_evaluate_passes_default_f_rsi_when_unset(mm):
+    """When mold_f_rsi is missing from settings, the manager uses the default
+    (0.80) and forwards it to calculate_mold_risk as f_rsi.
+    """
+    settings = {"mold_detection_enabled": True}
+
+    with patch(
+        "custom_components.roommind.managers.mold_manager.calculate_mold_risk",
+        return_value=("ok", 55.0, 18.0),
+    ) as mock_calc:
+        await mm.evaluate(
+            area_id="living",
+            area_name="Living Room",
+            current_temp=20.0,
+            current_humidity=50.0,
+            outdoor_temp=10.0,
+            settings=settings,
+        )
+
+    mock_calc.assert_called_once()
+    args, kwargs = mock_calc.call_args
+    assert kwargs["f_rsi"] == 0.80
+
+
+@pytest.mark.asyncio
+async def test_evaluate_passes_custom_f_rsi_from_settings(mm):
+    """When mold_f_rsi is provided in settings, the manager forwards it."""
+    settings = {
+        "mold_detection_enabled": True,
+        "mold_f_rsi": 0.65,
+    }
+
+    with patch(
+        "custom_components.roommind.managers.mold_manager.calculate_mold_risk",
+        return_value=("warning", 80.0, 14.0),
+    ) as mock_calc:
+        await mm.evaluate(
+            area_id="living",
+            area_name="Living Room",
+            current_temp=20.0,
+            current_humidity=70.0,
+            outdoor_temp=-5.0,
+            settings=settings,
+        )
+
+    mock_calc.assert_called_once()
+    args, kwargs = mock_calc.call_args
+    assert kwargs["f_rsi"] == 0.65

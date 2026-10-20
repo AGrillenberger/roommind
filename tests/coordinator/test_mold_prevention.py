@@ -172,6 +172,7 @@ class TestMoldRiskDetection:
         room = data["rooms"]["living_room_abc12345"]
         assert "mold_risk_level" in room
         assert "mold_surface_rh" in room
+        assert "mold_surface_temp" in room
         assert "mold_prevention_active" in room
         assert "mold_prevention_delta" in room
 

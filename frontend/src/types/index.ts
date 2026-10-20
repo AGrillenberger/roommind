@@ -45,6 +45,7 @@ export interface RoomLiveData {
   presence_away: boolean;
   mold_risk_level: "ok" | "warning" | "critical";
   mold_surface_rh: number | null;
+  mold_surface_temp: number | null;
   mold_prevention_active: boolean;
   mold_prevention_delta: number;
   blind_position: number | null;
@@ -190,6 +191,7 @@ export interface GlobalSettings {
   coil_dry_drain_minutes?: number;
   mold_detection_enabled?: boolean;
   mold_humidity_threshold?: number;
+  mold_f_rsi?: number;
   mold_sustained_minutes?: number;
   mold_notification_cooldown?: number;
   mold_notifications_enabled?: boolean;
