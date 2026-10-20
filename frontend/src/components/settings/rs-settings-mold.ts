@@ -14,7 +14,7 @@ export class RsSettingsMold extends RsSettingsBase {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ type: Boolean }) public moldDetectionEnabled = false;
   @property({ type: Number }) public moldHumidityThreshold = 70;
-  @property({ type: Number }) public moldFRsi = 0.80;
+  @property({ type: Number }) public moldFRsi = 0.8;
   @property({ type: Number }) public moldSustainedMinutes = 30;
   @property({ type: Boolean }) public moldPreventionEnabled = false;
   @property({ type: String }) public moldPreventionIntensity: "light" | "medium" | "strong" =

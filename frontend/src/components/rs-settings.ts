@@ -58,7 +58,7 @@ export class RsSettings extends LitElement {
   @state() private _valveProtectionInterval = 7;
   @state() private _moldDetectionEnabled = false;
   @state() private _moldHumidityThreshold = 70;
-  @state() private _moldFRsi = 0.80;
+  @state() private _moldFRsi = 0.8;
   @state() private _moldSustainedMinutes = 30;
   @state() private _moldNotificationCooldown = 60;
   @state() private _moldNotificationsEnabled = true;
@@ -123,7 +123,7 @@ export class RsSettings extends LitElement {
       this._valveProtectionInterval = s.valve_protection_interval_days ?? 7;
       this._moldDetectionEnabled = s.mold_detection_enabled ?? false;
       this._moldHumidityThreshold = s.mold_humidity_threshold ?? 70;
-      this._moldFRsi = s.mold_f_rsi ?? 0.80;
+      this._moldFRsi = s.mold_f_rsi ?? 0.8;
       this._moldSustainedMinutes = s.mold_sustained_minutes ?? 30;
       this._moldNotificationCooldown = s.mold_notification_cooldown ?? 60;
       this._moldNotificationsEnabled = s.mold_notifications_enabled ?? true;

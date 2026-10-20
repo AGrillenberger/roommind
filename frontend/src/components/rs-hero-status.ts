@@ -715,14 +715,10 @@ export class RsHeroStatus extends LitElement {
                         ${
                           live.mold_surface_temp != null
                             ? html`<span class="hero-metric-sub"
-                                >${localize(
-                                  "room.mold_surface_temp",
-                                  this.hass?.language ?? "en",
-                                  {
-                                    value: formatTemp(live.mold_surface_temp, this.hass),
-                                    unit: tempUnit(this.hass),
-                                  },
-                                )}</span
+                                >${localize("room.mold_surface_temp", this.hass?.language ?? "en", {
+                                  value: formatTemp(live.mold_surface_temp, this.hass),
+                                  unit: tempUnit(this.hass),
+                                })}</span
                               >`
                             : nothing
                         }
