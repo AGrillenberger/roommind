@@ -1348,6 +1348,24 @@ async def test_save_settings_mold_fields(ws_hass, store, connection):
 
 
 @pytest.mark.asyncio
+async def test_save_settings_mold_f_rsi_range(ws_hass, store, connection):
+    """mold_f_rsi is stored and limited to the realistic 0.6-0.95 (below, the surface drops under 5 °C and reads ok)."""
+    import voluptuous as vol
+
+    await store.async_load()
+    await _save_settings(ws_hass, connection, {"id": 30, "type": "roommind/settings/save", "mold_f_rsi": 0.65})
+    assert connection.send_result.call_args[0][1]["settings"]["mold_f_rsi"] == 0.65
+
+    schema = websocket_save_settings._ws_schema
+    base = {"id": 1, "type": "roommind/settings/save"}
+    assert schema({**base, "mold_f_rsi": "0.9"})["mold_f_rsi"] == 0.9
+    with pytest.raises(vol.Invalid):
+        schema({**base, "mold_f_rsi": 0.5})
+    with pytest.raises(vol.Invalid):
+        schema({**base, "mold_f_rsi": 1.0})
+
+
+@pytest.mark.asyncio
 async def test_save_settings_mold_partial_update(ws_hass, store, connection):
     """Updating only one mold field should not affect others (merge behavior)."""
     await store.async_load()

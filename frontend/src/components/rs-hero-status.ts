@@ -170,12 +170,6 @@ export class RsHeroStatus extends LitElement {
         color: var(--info-color, #2196f3);
       }
 
-      .hero-metric-sub {
-        font-size: 12px;
-        color: var(--secondary-text-color);
-        margin-left: 4px;
-      }
-
       .hero-no-data {
         font-size: 14px;
         color: var(--disabled-text-color, #9e9e9e);
@@ -714,12 +708,11 @@ export class RsHeroStatus extends LitElement {
                         })}
                         ${
                           live.mold_surface_temp != null
-                            ? html`<span class="hero-metric-sub"
-                                >${localize("room.mold_surface_temp", this.hass?.language ?? "en", {
-                                  value: formatTemp(live.mold_surface_temp, this.hass),
-                                  unit: tempUnit(this.hass),
-                                })}</span
-                              >`
+                            ? html`·
+                              ${localize("room.mold_surface_temp", this.hass?.language ?? "en", {
+                                value: formatTemp(live.mold_surface_temp, this.hass),
+                                unit: tempUnit(this.hass),
+                              })}`
                             : nothing
                         }
                       </div>`

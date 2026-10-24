@@ -183,6 +183,10 @@ def test_calculate_mold_risk_f_rsi_can_change_risk_level():
     assert srh_better < srh_default
     assert level_better in ("warning", "ok")
 
+    # Poor insulation promotes a borderline warning: 20°C, 60% RH, 0°C → warning at 0.80
+    assert calculate_mold_risk(20.0, 60.0, 0.0)[0] == "warning"
+    assert calculate_mold_risk(20.0, 60.0, 0.0, f_rsi=0.65)[0] == "critical"
+
 
 def test_calculate_mold_risk_returns_surface_temp():
     """calculate_mold_risk returns the estimated wall surface temperature
